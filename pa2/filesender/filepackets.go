@@ -91,7 +91,7 @@ loop:
 
 func (fileSender *FileSender) exit() {
 	// Broadcast an EXIT Segment
-	log.Info.Println("Sending an EXIT message to receivers.")
+	log.Info.Println("Send an EXIT message to receivers.")
 	fileSender.Write(datagram.New(header.EXIT, 0, nil).Bytes())
 }
 
@@ -118,14 +118,14 @@ func (fileSender *FileSender) send(file *os.File) {
 			// start broadcasting this segment
 			timeoutSegment.Start(nil)
 			// Add the segment to the window
-			log.Info.Printf("add segment to the window: segment header: %#v", timeoutSegment.Header())
+			log.Debug.Printf("BROADCAST: Add segment to the window: segment header: %#v", timeoutSegment.Header())
 			fileSender.window.Add(timeoutSegment)
 		}
 	)
 	waitReceiveACK.Add(1)
 	// Start a new thread that listens to acknowlegement
-	go fileSender.receiveACK(doneReceiveACK, &waitReceiveACK)
-	log.Info.Println("Start sending file: ", file.Name())
+	go fileSender.handleACK(doneReceiveACK, &waitReceiveACK)
+	log.Info.Printf("BROADCAST: Start broadcasting file: file's name \"%s\"", file.Name())
 	for payload := next(file); len(payload) != 0; payload = next(file) {
 		broadcastSegmentWithTimeout(*h, payload)
 		// Get the next header in the sequence
@@ -147,6 +147,7 @@ type receiverResponse struct {
 
 func (fileSender *FileSender) listenResponse(doneListen <-chan struct{},
 	newResponse chan<- receiverResponse, wg *sync.WaitGroup) {
+	log.Debug.Println("Waiting for ACKs: Start receiving ACK reponses")
 loop:
 	for {
 		select {
@@ -162,15 +163,15 @@ loop:
 			size, addr, err := fileSender.ReadFrom(data)
 			if err != nil {
 				if err, ok := err.(net.Error); ok && err.Timeout() {
-					log.Info.Println("Wait for receivers' ACK: timeout.")
+					log.Info.Println("Waiting for ACKs: timeout.")
 					break
 				}
-				log.Warning.Println("Error waiting for ACK: ", err)
+				log.Warning.Println("Waiting for ACKs: error: ", err)
 				break
 			}
 			// Check the size of the data
 			if size < header.HeaderSizeInBytes {
-				log.Debug.Fatalln("the received packet size is not ",
+				log.Debug.Fatalln("Waiting for ACKs: the received packet size is not valid: expected",
 					header.HeaderSizeInBytes)
 			}
 			newResponse <- receiverResponse{
@@ -180,6 +181,7 @@ loop:
 		}
 	}
 	wg.Done()
+	log.Debug.Println("Waiting for ACKs: Stopped receiving ACK responses.")
 }
 
 // receiveACK receives acknowledgement from client
@@ -187,7 +189,7 @@ loop:
 // doneReceivingSignal is a signal that asks the method to stop receiving ACK
 // It does not mean receiveACK stop right away. receiveACK only stop when window
 // is empty ( no more segment that needs an ACK )
-func (fileSender *FileSender) receiveACK(doneReceivingSignal <-chan struct{},
+func (fileSender *FileSender) handleACK(doneReceivingSignal <-chan struct{},
 	wg *sync.WaitGroup) {
 
 	var (
@@ -198,7 +200,6 @@ func (fileSender *FileSender) receiveACK(doneReceivingSignal <-chan struct{},
 		newResponse        = make(chan receiverResponse)
 	)
 	listenResponseWait.Add(1)
-	log.Debug.Println("Start receiving ACK reponses.")
 	go fileSender.listenResponse(doneListenResponse, newResponse, &listenResponseWait)
 	// Set every receivers to start tracking timeout
 	for _, receiver := range fileSender.receivers {
@@ -214,7 +215,6 @@ loop:
 				close(doneListenResponse)
 				// Wait till the listenResponse process closes
 				listenResponseWait.Wait()
-				log.Debug.Println("Stopped receiving ACK responses.")
 				break loop
 			}
 		case response := <-newResponse:
@@ -231,10 +231,10 @@ loop:
 						segment.Stop()
 					}
 				} else {
-					log.Debug.Fatalln("Invalid segment type in the window. Expect: TimeoutSegment")
+					log.Debug.Fatalln("Handle ACK: Invalid segment type in the window. Expect: TimeoutSegment")
 				}
 			} else {
-				log.Info.Printf("Received packet from an unknown receiver @%s", response.addr.String())
+				log.Info.Printf("Handle ACK: Received packet from an unknown receiver @%s", response.addr.String())
 			}
 		case addr := <-unresponsiveAddr:
 			// Get rid of the receiver
@@ -260,7 +260,7 @@ func nextPayload(file *os.File, bufferSize int) []byte {
 		if err == io.EOF {
 			return nil
 		}
-		log.Warning.Println("getting next payload: error when reading file: ", err)
+		log.Warning.Println("Getting next payload: error: reading file: ", err)
 	}
 	return payload[:readLength]
 }
@@ -273,7 +273,7 @@ func (fileSender *FileSender) setup(file *os.File) {
 	// Reset the receiver set
 	fileSender.receivers = make(map[Addr]*Receiver)
 
-	log.Info.Println("Sending an initated packet for file name:", file.Name())
+	log.Info.Println("SETUP: Sending an initative (FILE) packet for file name:", file.Name())
 	var (
 		timeoutSegment TimeoutSegment
 
@@ -299,19 +299,19 @@ loop:
 	for {
 		select {
 		case response := <-newResponse:
-			go log.Info.Println("new client accepted @", response.addr.String())
+			go log.Info.Println("SETUP: New client accepted: address @", response.addr.String())
 			// Add the receiver to the set
 			fileSender.receivers[getAddr(response.addr)] =
 				NewReceiver(getAddr(response.addr), fileSender.UnresponsiveTimeout)
 		case <-timer:
 			// No receiver: keep setting up
 			if len(fileSender.receivers) == 0 {
-				go log.Info.Println("setup: no receiver: keep waiting for new connections.")
+				go log.Info.Println("SETUP: no receiver: keep waiting for new connections.")
 				// Reset the timer
 				timer = time.NewTimer(fileSender.SetupTimeout).C
 			} else {
 				go func() {
-					log.Info.Println("SETUP TIMEOUT & FINISH. Start sending file to the following client(s): ")
+					log.Info.Println("SETUP: TIMEOUT & FINISH. Start sending file to the following client(s): ")
 					for rc := range fileSender.receivers {
 						log.Info.Printf("\t%s", rc)
 					}
