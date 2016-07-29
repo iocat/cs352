@@ -304,18 +304,25 @@ loop:
 			fileSender.receivers[getAddr(response.addr)] =
 				NewReceiver(getAddr(response.addr), fileSender.UnresponsiveTimeout)
 		case <-timer:
-			go func() {
-				log.Info.Println("Setup timeouts. Start sending file to the following clients: ")
-				for rc := range fileSender.receivers {
-					log.Info.Printf("\t%s", rc)
-				}
-			}()
-			// Stop broadcasting the filename
-			timeoutSegment.Stop()
-			// Close then wait till the response receiver is done
-			close(responseDone)
-			responseWait.Wait()
-			break loop
+			// No receiver: keep setting up
+			if len(fileSender.receivers) == 0 {
+				go log.Info.Println("setup: no receiver: keep waiting for new connections.")
+				// Reset the timer
+				timer = time.NewTimer(fileSender.SetupTimeout).C
+			} else {
+				go func() {
+					log.Info.Println("SETUP TIMEOUT & FINISH. Start sending file to the following client(s): ")
+					for rc := range fileSender.receivers {
+						log.Info.Printf("\t%s", rc)
+					}
+				}()
+				// Stop broadcasting the filename
+				timeoutSegment.Stop()
+				// Close then wait till the response receiver is done
+				close(responseDone)
+				responseWait.Wait()
+				break loop
+			}
 		}
 	}
 }
