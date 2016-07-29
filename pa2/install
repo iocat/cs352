@@ -1,0 +1,44 @@
+#!/bin/bash
+SENDER="./cmd/sender/"
+RECEIVER="./cmd/receiver/"
+if [[ $# -eq 0 ]] ; then
+    echo "usage: $0 [sender|receiver|both|clean]"
+fi
+
+
+clean(){
+    rm -f ./sender ./receiver
+}
+
+sender(){
+    go build $SENDER
+    go install $SENDER
+}
+
+receiver(){
+    go build $RECEIVER
+    go install $RECEIVER
+}
+
+
+both(){
+    sender
+    receiver
+}
+
+if [[ $1 = "sender" ]]; then
+    sender
+fi
+
+if [[ $1 = "receiver" ]]; then
+    receiver
+fi
+
+if [[ $1 = "both" ]]; then
+    clean
+    both
+fi
+
+if [[ $1 = "clean" ]]; then
+    clean
+fi
