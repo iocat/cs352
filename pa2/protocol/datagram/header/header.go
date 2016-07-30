@@ -104,21 +104,21 @@ func New(flag Flag, sequence Sequence) *Header {
 // NextInSequence returns the next header in the sequence
 // the header is only provided with a color and the next sequence number
 // No extra information is marked in the flag
-func (header *Header) NextInSequence() *Header {
+func (header Header) NextInSequence() Header {
 	if header.Sequence == math.MaxUint32 {
 		if header.IsRED() {
-			return &Header{
+			return Header{
 				Flag:     BLUE,
 				Sequence: 0,
 			}
 		}
-		return &Header{
+		return Header{
 			Flag:     RED,
 			Sequence: 0,
 		}
 
 	}
-	return &Header{
+	return Header{
 		Flag:     header.Flag,
 		Sequence: header.Sequence + 1,
 	}

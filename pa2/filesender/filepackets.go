@@ -92,7 +92,7 @@ func (fileSender *FileSender) exit() {
 func (fileSender *FileSender) send(file *os.File) {
 	var (
 		// the current header
-		h = &header.Header{
+		h = header.Header{
 			Flag:     header.RED,
 			Sequence: 0,
 		}
@@ -118,13 +118,13 @@ func (fileSender *FileSender) send(file *os.File) {
 	go fileSender.handleACK(doneReceiveACK, &waitReceiveACK)
 	log.Info.Printf("BROADCAST: Start broadcasting file: file's name \"%s\"", file.Name())
 	for payload := next(file); len(payload) != 0; payload = next(file) {
-		broadcastSegmentWithTimeout(*h, payload)
+		broadcastSegmentWithTimeout(h, payload)
 		// Get the next header in the sequence
 		h = h.NextInSequence()
 	}
 	// Set the header to EOF
 	_ = h.EOF()
-	broadcastSegmentWithTimeout(*h, nil)
+	broadcastSegmentWithTimeout(h, nil)
 	h = h.NextInSequence()
 	close(doneReceiveACK)
 	// Wait until everyone acknowledged the packets
