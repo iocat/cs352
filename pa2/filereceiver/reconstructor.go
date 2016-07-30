@@ -22,7 +22,7 @@ func reconstructFile(
 	for payload := range payloads {
 		if len(payload) == 0 {
 			// The length of the payload is 0
-			return
+			break
 		}
 		var (
 			length int
