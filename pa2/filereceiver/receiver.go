@@ -10,6 +10,7 @@ import (
 	"github.com/iocat/rutgers-cs352/pa2/protocol"
 	"github.com/iocat/rutgers-cs352/pa2/protocol/datagram"
 	"github.com/iocat/rutgers-cs352/pa2/protocol/datagram/header"
+	"github.com/iocat/rutgers-cs352/pa2/protocol/sender"
 	"github.com/iocat/rutgers-cs352/pa2/protocol/window"
 )
 
@@ -92,7 +93,7 @@ func validateDir(outputDir *os.File) error {
 }
 
 func toDrop(droppingChance int) bool {
-	return rand.Intn(100) > droppingChance
+	return rand.Intn(100) < droppingChance
 }
 
 // ReceiveFiles starts receiving files
@@ -128,6 +129,7 @@ loop:
 				if err != nil {
 					log.Warning.Fatalf("Unable to create file: %s", err)
 				}
+				go log.Info.Println("New FILE request: spawned a file reconstructing thread")
 				go reconstructFile(currentFile, reconstructData, reconstructDone)
 			} else {
 				// File duplication
@@ -154,6 +156,12 @@ loop:
 			} else {
 				reconstructData <- segment.Payload
 			}
+			// Send an ACK back
+			sender.New(fileReceiver.UDPConn,
+				datagram.New(
+					header.ACK|segment.Header.Flag,
+					segment.Header.Sequence,
+					nil)).SendTo(fileReceiver.senderAddr)
 		}
 	}
 }

@@ -9,7 +9,7 @@ import (
 // Sender represents a sender that can sends data on UDP
 type Sender interface {
 	Broadcast()
-	SendTo(*net.UDPAddr)
+	SendTo(net.Addr)
 }
 
 // New creates a new sender
@@ -41,6 +41,6 @@ func (sender *udpBroadcaster) Broadcast() {
 	sender.conn.Write(sender.packet.Bytes())
 }
 
-func (sender *udpBroadcaster) SendTo(addr *net.UDPAddr) {
+func (sender *udpBroadcaster) SendTo(addr net.Addr) {
 	sender.conn.WriteTo(sender.packet.Bytes(), addr)
 }

@@ -13,11 +13,11 @@ type Segment struct {
 }
 
 // New creates a new segment with a flag, a sequence number and a payload
-func New(flag header.Flag, sequence uint32, payload []byte) *Segment {
+func New(flag header.Flag, sequence header.Sequence, payload []byte) *Segment {
 	return &Segment{
 		Header: header.Header{
 			Flag:     flag,
-			Sequence: header.Sequence(sequence),
+			Sequence: sequence,
 		},
 		Payload: payload,
 	}
