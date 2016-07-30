@@ -58,6 +58,10 @@ loop:
 			if err != nil {
 				log.Warning.Printf("receive data error: %s", err)
 			}
+			if fileReceiver.senderAddr == nil {
+				log.Info.Println("new sender dectected: set this sender as an official sender")
+				fileReceiver.senderAddr = addr
+			}
 			// Check sender address
 			if addr.String() != fileReceiver.senderAddr.String() {
 				log.Warning.Println("receive broadcast packet from unknown sender host")
@@ -103,7 +107,7 @@ func (fileReceiver *FileReceiver) ReceiveFiles(outputDir *os.File) {
 		stopReceiving = make(chan struct{})
 
 		reconstructData = make(chan []byte)
-		reconstructDone chan struct{}
+		reconstructDone = make(chan struct{})
 		currentFile     *os.File
 		err             error
 	)
