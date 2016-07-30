@@ -66,6 +66,33 @@ func (header *Header) PureHeader() Header {
 	return pure
 }
 
+// Compare returns 0 if the header is equal the other
+// 1 if bigger and -1 if smaller
+// This comparision is based on the concept of RED-BLUE infinite
+// RED-BLUE sequencing
+func (header Header) Compare(other Header) int {
+	var (
+		this = header.PureHeader()
+		that = other.PureHeader()
+	)
+	if this == that {
+		return 0
+	} else if (this.IsRED() && that.IsRED()) ||
+		(this.IsBLUE() && that.IsBLUE()) {
+		if this.Sequence > that.Sequence {
+			return 1
+		}
+		return -1
+	} else if this.IsRED() && that.IsBLUE() ||
+		this.IsBLUE() && that.IsRED() {
+		if this.Sequence > that.Sequence {
+			return -1
+		}
+		return 1
+	}
+	panic("incorrect header provided")
+}
+
 // New creates a new Header using the provided flag and sequence number
 func New(flag Flag, sequence Sequence) *Header {
 	return &Header{
