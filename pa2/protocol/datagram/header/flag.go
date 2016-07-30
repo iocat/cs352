@@ -1,30 +1,20 @@
 package header
 
-const (
-	flagACK = 1 << iota
-	flagNACK
-	flagFILE
-	flagEOF
-	flagEXIT
-	flagRED
-	flagBLUE
-)
-
 var (
 	// ACK indicates an Acknowledged packet
-	ACK = *new(Flag).ACK()
+	ACK = Flag(1)
 	// NACK indicates an not_acknowledged packet
-	NACK = *new(Flag).NACK()
+	NACK = Flag(2)
 	// FILE indicates a file name packet
-	FILE = *new(Flag).FILE()
+	FILE = Flag(4)
 	// EOF indicates an End of the file
-	EOF = *new(Flag).EOF()
+	EOF = Flag(8)
 	// EXIT indicates the receiver to exit
-	EXIT = *new(Flag).EXIT()
+	EXIT = Flag(16)
 	// RED indicates this is a red packet
-	RED = *new(Flag).RED()
+	RED = Flag(32)
 	// BLUE indicates this is a blue packet
-	BLUE = *new(Flag).BLUE()
+	BLUE = Flag(64)
 )
 
 // Flag represents an unsigned byte
@@ -37,37 +27,37 @@ func (flag Flag) byte() byte {
 
 // IsRED returns whether this flag is a red
 func (flag Flag) IsRED() bool {
-	return flag&flagRED != 0
+	return flag&RED != 0
 }
 
 // IsFILE checks whether this flag is a file name
 func (flag Flag) IsFILE() bool {
-	return flag&flagFILE != 0
+	return flag&FILE != 0
 }
 
 // IsNACK checks whether this flag is a NACK
 func (flag Flag) IsNACK() bool {
-	return flag&flagNACK != 0
+	return flag&NACK != 0
 }
 
 // IsBLUE returns whether this flag is a blue
 func (flag Flag) IsBLUE() bool {
-	return flag&flagBLUE == 0
+	return flag&BLUE != 0
 }
 
 // IsACK returns whether this flag is an ACK or not
 func (flag Flag) IsACK() bool {
-	return flag&flagACK != 0
+	return flag&ACK != 0
 }
 
 // IsEOF returns whether this flag is an EOF or not
 func (flag Flag) IsEOF() bool {
-	return flag&flagEOF != 0
+	return flag&EOF != 0
 }
 
 // IsEXIT returns whether this flag is an Exit signal or not
 func (flag Flag) IsEXIT() bool {
-	return flag&flagEXIT != 0
+	return flag&EXIT != 0
 }
 
 // Is checks whether this flag contains the provided list of flags
@@ -82,42 +72,42 @@ func (flag Flag) Is(flags ...Flag) bool {
 
 // RED decorates the flag as red
 func (flag *Flag) RED() *Flag {
-	*flag |= flagRED
+	*flag |= RED
 	return flag
 }
 
 // BLUE decorates the flag as blue
 func (flag *Flag) BLUE() *Flag {
-	*flag |= flagBLUE
+	*flag |= BLUE
 	return flag
 }
 
 // ACK decorates the flag with an ACK
 func (flag *Flag) ACK() *Flag {
-	*flag |= flagACK
+	*flag |= ACK
 	return flag
 }
 
 // NACK decorates the flag with a NACK
 func (flag *Flag) NACK() *Flag {
-	*flag |= flagNACK
+	*flag |= NACK
 	return flag
 }
 
 // FILE decorates the flag with a FILE
 func (flag *Flag) FILE() *Flag {
-	*flag |= flagFILE
+	*flag |= FILE
 	return flag
 }
 
 // EOF decorates the flag with an EOF flag
 func (flag *Flag) EOF() *Flag {
-	*flag |= flagEOF
+	*flag |= EOF
 	return flag
 }
 
 // EXIT decorates the flag with an Exit signal
 func (flag *Flag) EXIT() *Flag {
-	*flag |= flagEXIT
+	*flag |= EXIT
 	return flag
 }
