@@ -1,6 +1,5 @@
 package filesender
 
-//TODO: implement this
 import (
 	"io"
 	"net"
@@ -42,12 +41,6 @@ type FileSender struct {
 	// The window used to store the TimeoutSegment
 	window *window.Window
 
-	// The size of the payload
-	PayloadSize int
-
-	// The size of the application level segment
-	SegmentSize int
-
 	// The broadcasting socket
 	*net.UDPConn
 
@@ -61,8 +54,6 @@ func New(conn *net.UDPConn, files []*os.File) *FileSender {
 		SegmentTimeout:      protocol.SegmentTimeout,
 		SetupTimeout:        protocol.SetupTimeout,
 		UnresponsiveTimeout: protocol.UnresponsiveTimeout,
-		PayloadSize:         protocol.PayloadSize,
-		SegmentSize:         protocol.PayloadSize + header.HeaderSizeInBytes,
 		UDPConn:             conn,
 		window:              window.New(protocol.WindowSize),
 		Files:               files,
@@ -109,7 +100,7 @@ func (fileSender *FileSender) send(file *os.File) {
 		waitReceiveACK sync.WaitGroup
 		// closure to get the next payload... omg, this is magic @@
 		next = func(file *os.File) []byte {
-			return nextPayload(file, fileSender.PayloadSize)
+			return nextPayload(file, protocol.PayloadSize)
 		}
 		// A function to broadcast payload with a header
 		broadcastSegmentWithTimeout = func(h header.Header, payload []byte) {
@@ -184,7 +175,7 @@ loop:
 	log.Debug.Println("Waiting for ACKs: Stopped receiving ACK responses.")
 }
 
-// receiveACK receives acknowledgement from client
+// handleACK receives acknowledgement from client
 // and marks the segment as removed
 // doneReceivingSignal is a signal that asks the method to stop receiving ACK
 // It does not mean receiveACK stop right away. receiveACK only stop when window
