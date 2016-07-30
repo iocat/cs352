@@ -124,35 +124,35 @@ loop:
 		// try to drop the packet
 		if toDrop(fileReceiver.droppingChance) {
 			log.Warning.Printf("pseudo packet drop: drop one with header: %#v",
-				segment.Header)
+				segment.Header())
 			continue
 		} else {
 			// Accepted: Send an ACK back
 			go sender.New(fileReceiver.UDPConn,
 				datagram.New(
-					header.ACK|segment.Header.Flag,
-					segment.Header.Sequence,
+					header.ACK|segment.Header().Flag,
+					segment.Header().Sequence,
 					nil)).SendTo(fileReceiver.senderAddr)
 		}
 
-		if compRes := segment.Header.Compare(expectedHeader); compRes == 0 {
+		if compRes := segment.Header().Compare(expectedHeader); compRes == 0 {
 			// Handle an inorder segment
 			if fileReceiver.exitableHandleSegment(segment) {
 				break loop
 			}
-			expectedHeader = segment.Header.NextInSequence()
+			expectedHeader = segment.Header().NextInSequence()
 			// Keep getting the next expected window from the cached window
 		inner:
 			for {
 				if subsequent := fileReceiver.window.Get(expectedHeader); subsequent != nil {
 					// Handle this segment
-					if fileReceiver.exitableHandleSegment(subsequent) {
+					if fileReceiver.exitableHandleSegment(subsequent.(*receiverSegment)) {
 						break loop
 					}
-					expectedHeader = segment.Header.NextInSequence()
+					expectedHeader = subsequent.Header().NextInSequence()
 					// Remove from cache
-					if subsequence, ok := subsequence.(Segment); ok {
-						subsequence.canRemove()
+					if subsequent, ok := subsequent.(*receiverSegment); ok {
+						subsequent.canRemove()
 					} else {
 						log.Debug.Panic("wrong format for segment: expected a filerecever.Segment")
 					}
@@ -162,16 +162,16 @@ loop:
 			}
 		} else {
 			log.Info.Printf("out of sequence packet: got %#v, expected %#v.",
-				segment.Header, expectedHeader)
+				segment.Header(), expectedHeader)
 			// This packet is later in the sequence
 			if compRes > 0 {
-				log.Info.Printf("packet with header %#v cached.", segment.Header)
+				log.Info.Printf("packet with header %#v cached.", segment.Header())
 				// Go ahead and cache this packet (non-blocking cache)
 				go fileReceiver.window.Add(segment)
 			} else {
 				// This packet is received already
 				// compRes < 0 : packet received
-				log.Info.Printf("packet with header %#v received: pass.", segment.Header)
+				log.Info.Printf("packet with header %#v received: pass.", segment.Header())
 			}
 
 		}
@@ -180,8 +180,8 @@ loop:
 
 var errorExit = errors.New("exiting now")
 
-func (fileReceiver *FileReceiver) exitableHandleSegment(segmnet *Segment) bool {
-	if err := fileReceiver(segment); err != nil {
+func (fileReceiver *FileReceiver) exitableHandleSegment(segment *receiverSegment) bool {
+	if err := fileReceiver.handleSegment(segment); err != nil {
 		if err == errorExit {
 			return true
 		}
@@ -190,7 +190,7 @@ func (fileReceiver *FileReceiver) exitableHandleSegment(segmnet *Segment) bool {
 	return false
 }
 
-func (fileReceiver *FileReceiver) handleSegment(segment *Segment) error {
+func (fileReceiver *FileReceiver) handleSegment(segment *receiverSegment) error {
 	var err error
 	switch {
 	case segment.IsFILE():

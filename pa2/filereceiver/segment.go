@@ -3,21 +3,15 @@ package filereceiver
 import (
 	"github.com/iocat/rutgers-cs352/pa2/protocol/datagram"
 	"github.com/iocat/rutgers-cs352/pa2/protocol/datagram/header"
-	"github.com/iocat/rutgers-cs352/pa2/protocol/window"
 )
-
-type Segment interface {
-	window.Segment
-	canRemove()
-}
 
 type receiverSegment struct {
 	*datagram.Segment
 	markedRemovable chan struct{}
 }
 
-func newReceiverSegment(segment *datagram.Segment) Segment {
-	return &newSegment{
+func newReceiverSegment(segment *datagram.Segment) *receiverSegment {
+	return &receiverSegment{
 		markedRemovable: make(chan struct{}),
 		Segment:         segment,
 	}
