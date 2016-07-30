@@ -11,7 +11,13 @@ import (
 // the byte array stream.
 // if the length of the received payload is 0, the function returns and
 // the file is closed
-func reconstructFile(file io.WriteCloser, payloads <-chan []byte) {
+// file is a file to write to
+// payloads is a channel of payload this function is listening to
+// waiter is a signaling mechanism notifies the waiting thread this is done
+func reconstructFile(
+	file io.WriteCloser,
+	payloads <-chan []byte,
+	waiter chan<- struct{}) {
 	defer file.Close()
 	for payload := range payloads {
 		if len(payload) == 0 {
@@ -32,4 +38,5 @@ func reconstructFile(file io.WriteCloser, payloads <-chan []byte) {
 			}
 		}(length)
 	}
+	waiter <- struct{}{}
 }
