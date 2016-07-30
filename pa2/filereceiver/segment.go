@@ -1,4 +1,4 @@
-package fileReceiver
+package filereceiver
 
 import (
 	"github.com/iocat/rutgers-cs352/pa2/protocol/datagram"
