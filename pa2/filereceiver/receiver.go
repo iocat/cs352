@@ -133,6 +133,7 @@ loop:
 				segment.Header())
 			continue
 		} else {
+			log.Info.Printf("received %#v: send an ACK back.", segment.Header())
 			// Accepted: Send an ACK back
 			go sender.New(fr.UDPConn,
 				datagram.New(
