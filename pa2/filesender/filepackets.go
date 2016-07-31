@@ -135,7 +135,7 @@ func (fs *FileSender) send(file *os.File, first header.Header) header.Header {
 
 type receiverResponse struct {
 	data []byte
-	addr net.Addr
+	addr *net.UDPAddr
 }
 
 func (fs *FileSender) listenResponse(doneListen <-chan struct{},
@@ -153,7 +153,7 @@ loop:
 			fs.SetReadDeadline(
 				time.Now().Add(fs.UnresponsiveTimeout))
 			// Read the packet
-			size, addr, err := fs.ReadFrom(data[0:])
+			size, addr, err := fs.ReadFromUDP(data[0:])
 			if err != nil {
 				if err, ok := err.(net.Error); ok && err.Timeout() {
 					log.Warning.Println("Waiting for ACKs: timeout.")

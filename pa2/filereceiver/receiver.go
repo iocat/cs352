@@ -18,7 +18,7 @@ import (
 // FileReceiver represents a receiver that receives file packets from
 // UDP Connection
 type FileReceiver struct {
-	senderAddr net.Addr
+	senderAddr *net.UDPAddr
 
 	droppingChance int
 
@@ -83,7 +83,7 @@ loop:
 			break loop
 		default:
 			data = make([]byte, protocol.SegmentSize)
-			length, addr, err := fr.ReadFrom(data)
+			length, addr, err := fr.ReadFromUDP(data)
 			if err != nil {
 				log.Warning.Printf("receive data error: %s", err)
 			}
