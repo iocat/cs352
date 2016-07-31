@@ -139,7 +139,7 @@ loop:
 			if fr.exitableHandleSegment(segment) {
 				break loop
 			}
-			expectedHeader = segment.Header().NextInSequence()
+			expectedHeader = segment.Header().Next()
 			// Keep getting the next expected window from the cached window
 		inner:
 			for {
@@ -148,7 +148,7 @@ loop:
 					if fr.exitableHandleSegment(subsequent.(*receiverSegment)) {
 						break loop
 					}
-					expectedHeader = subsequent.Header().NextInSequence()
+					expectedHeader = subsequent.Header().Next()
 					// Remove from cache
 					if subsequent, ok := subsequent.(*receiverSegment); ok {
 						subsequent.canRemove()

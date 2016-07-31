@@ -121,7 +121,7 @@ func (fs *FileSender) send(file *os.File, first header.Header) header.Header {
 	for payload := next(file); len(payload) != 0; payload = next(file) {
 		broadcastSegmentWithTimeout(h, payload)
 		// Get the next header in the sequence
-		h = h.NextInSequence()
+		h = h.Next()
 	}
 	// Set the header to EOF
 	_ = h.EOF()
@@ -130,7 +130,7 @@ func (fs *FileSender) send(file *os.File, first header.Header) header.Header {
 	// Wait until everyone acknowledged the packets
 	waitReceiveACK.Wait()
 	// Return the next header in sequence
-	return h.NextInSequence()
+	return h.Next()
 }
 
 type receiverResponse struct {
@@ -318,7 +318,7 @@ loop:
 			}
 		}
 	}
-	return h.NextInSequence()
+	return h.Next()
 }
 
 // netTimeoutSegment creates an timeout segment corresponding to this FileSender
