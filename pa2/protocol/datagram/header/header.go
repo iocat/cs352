@@ -60,9 +60,12 @@ func (header *Header) Bytes() []byte {
 // and the sequence number
 func (header *Header) PureHeader() Header {
 	var pure Header
-	pure = *header
-	// set the flag to whether it is red or not
-	pure.Flag &= (RED | BLUE)
+	pure.Sequence = header.Sequence
+	if header.IsRED() {
+		pure.Flag = RED
+	} else {
+		pure.Flag = BLUE
+	}
 	return pure
 }
 
