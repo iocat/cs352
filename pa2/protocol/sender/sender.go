@@ -42,5 +42,5 @@ func (sender *udpBroadcaster) Broadcast() {
 }
 
 func (sender *udpBroadcaster) SendTo(addr net.Addr) {
-	sender.conn.WriteTo(sender.packet.Bytes(), addr)
+	sender.conn.WriteToUDP(sender.packet.Bytes(), addr.(*net.UDPAddr))
 }
