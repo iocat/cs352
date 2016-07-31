@@ -49,7 +49,7 @@ func New(conn *net.UDPConn, droppingChance int) *FileReceiver {
 }
 
 // receiveData receives data buffer and send it to the newData channel
-func (fileReceiver *FileReceiver) receiveData(
+func (fr *FileReceiver) receiveData(
 	newData chan<- []byte,
 	stopSignal <-chan struct{}) {
 	var (
@@ -62,18 +62,18 @@ loop:
 			break loop
 		default:
 			data = make([]byte, protocol.SegmentSize)
-			length, addr, err := fileReceiver.ReadFrom(data)
+			length, addr, err := fr.ReadFrom(data)
 			if err != nil {
 				log.Warning.Printf("receive data error: %s", err)
 			}
-			if fileReceiver.senderAddr == nil {
+			if fr.senderAddr == nil {
 				log.Info.Println("new sender dectected: set this sender as an official sender")
-				fileReceiver.senderAddr = addr
+				fr.senderAddr = addr
 			}
 			// Check sender address
-			if addr.String() != fileReceiver.senderAddr.String() {
+			if addr.String() != fr.senderAddr.String() {
 				log.Warning.Printf("receive broadcast packet from unknown sender host, got %s, expected %s",
-					addr.String(), fileReceiver.senderAddr.String())
+					addr.String(), fr.senderAddr.String())
 			}
 			// check the packet length
 			if length < protocol.HeaderSize {
@@ -106,8 +106,7 @@ func toDrop(droppingChance int) bool {
 
 // ReceiveFiles starts receiving files
 // outputDir is the directory to write the downloaded files to
-// TODO: implement reordering of packets
-func (fileReceiver *FileReceiver) ReceiveFiles(outputDir *os.File) {
+func (fr *FileReceiver) ReceiveFiles(outputDir *os.File) {
 	var (
 		newData       = make(chan []byte)
 		stopReceiving = make(chan struct{})
@@ -117,36 +116,36 @@ func (fileReceiver *FileReceiver) ReceiveFiles(outputDir *os.File) {
 			Sequence: 0,
 		}
 	)
-	go fileReceiver.receiveData(newData, stopReceiving)
+	go fr.receiveData(newData, stopReceiving)
 loop:
 	for data := range newData {
 		segment := newReceiverSegment(datagram.NewFromUDPPayload(data))
 		// try to drop the packet
-		if toDrop(fileReceiver.droppingChance) {
+		if toDrop(fr.droppingChance) {
 			log.Warning.Printf("pseudo packet drop: drop one with header: %#v",
 				segment.Header())
 			continue
 		} else {
 			// Accepted: Send an ACK back
-			go sender.New(fileReceiver.UDPConn,
+			go sender.New(fr.UDPConn,
 				datagram.New(
 					header.ACK|segment.Header().Flag,
 					segment.Header().Sequence,
-					nil)).SendTo(fileReceiver.senderAddr)
+					nil)).SendTo(fr.senderAddr)
 		}
 
 		if compRes := segment.Header().Compare(expectedHeader); compRes == 0 {
 			// Handle an inorder segment
-			if fileReceiver.exitableHandleSegment(segment) {
+			if fr.exitableHandleSegment(segment) {
 				break loop
 			}
 			expectedHeader = segment.Header().NextInSequence()
 			// Keep getting the next expected window from the cached window
 		inner:
 			for {
-				if subsequent := fileReceiver.window.Get(expectedHeader); subsequent != nil {
+				if subsequent := fr.window.Get(expectedHeader); subsequent != nil {
 					// Handle this segment
-					if fileReceiver.exitableHandleSegment(subsequent.(*receiverSegment)) {
+					if fr.exitableHandleSegment(subsequent.(*receiverSegment)) {
 						break loop
 					}
 					expectedHeader = subsequent.Header().NextInSequence()
@@ -167,7 +166,7 @@ loop:
 			if compRes > 0 {
 				log.Info.Printf("packet with header %#v cached.", segment.Header())
 				// Go ahead and cache this packet (non-blocking cache)
-				go fileReceiver.window.Add(segment)
+				go fr.window.Add(segment)
 			} else {
 				// This packet is received already
 				// compRes < 0 : packet received
@@ -180,8 +179,8 @@ loop:
 
 var errorExit = errors.New("exiting now")
 
-func (fileReceiver *FileReceiver) exitableHandleSegment(segment *receiverSegment) bool {
-	if err := fileReceiver.handleSegment(segment); err != nil {
+func (fr *FileReceiver) exitableHandleSegment(segment *receiverSegment) bool {
+	if err := fr.handleSegment(segment); err != nil {
 		if err == errorExit {
 			return true
 		}
@@ -190,44 +189,44 @@ func (fileReceiver *FileReceiver) exitableHandleSegment(segment *receiverSegment
 	return false
 }
 
-func (fileReceiver *FileReceiver) handleSegment(segment *receiverSegment) error {
+func (fr *FileReceiver) handleSegment(segment *receiverSegment) error {
 	var err error
 	switch {
 	case segment.IsFILE():
-		if fileReceiver.currentFile == nil {
-			fileReceiver.currentFile, err = os.Create(string(segment.Payload))
+		if fr.currentFile == nil {
+			fr.currentFile, err = os.Create(string(segment.Payload))
 			if err != nil {
 				log.Warning.Fatalf("Unable to create file: %s", err)
 			}
 			go log.Info.Println("New FILE request: spawned a file reconstructing thread")
-			go reconstructFile(fileReceiver.currentFile,
-				fileReceiver.reconstructData,
-				fileReceiver.reconstructDone)
+			go reconstructFile(fr.currentFile,
+				fr.reconstructData,
+				fr.reconstructDone)
 		} else {
 			// File duplication
 			go log.Info.Println("duplicated FILE request: skip.")
-			if fileReceiver.currentFile.Name() == string(segment.Payload) {
+			if fr.currentFile.Name() == string(segment.Payload) {
 				return nil
 			}
 		}
 	case segment.IsEXIT():
-		if fileReceiver.currentFile != nil {
+		if fr.currentFile != nil {
 			// Send an eof signal
-			sendEOF(fileReceiver.reconstructData, fileReceiver.reconstructDone)
-			fileReceiver.currentFile = nil
+			sendEOF(fr.reconstructData, fr.reconstructDone)
+			fr.currentFile = nil
 		}
 		return errorExit
 	case segment.IsEOF():
-		if fileReceiver.currentFile != nil {
-			sendEOF(fileReceiver.reconstructData, fileReceiver.reconstructDone)
-			fileReceiver.currentFile = nil
+		if fr.currentFile != nil {
+			sendEOF(fr.reconstructData, fr.reconstructDone)
+			fr.currentFile = nil
 		}
 	// Normal file packet
 	default:
-		if fileReceiver.currentFile == nil {
+		if fr.currentFile == nil {
 			log.Warning.Println("Received data packet but no file is set up.")
 		} else {
-			fileReceiver.reconstructData <- segment.Payload
+			fr.reconstructData <- segment.Payload
 		}
 	}
 	return nil

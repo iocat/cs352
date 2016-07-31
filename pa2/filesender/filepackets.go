@@ -63,39 +63,40 @@ func New(conn *net.UDPConn, files []*os.File) *FileSender {
 }
 
 // Run is a blocking call that starts the sending server
-func (fileSender *FileSender) Run() {
+func (fs *FileSender) Run() {
+	h := header.Header{
+		Flag:     header.RED,
+		Sequence: 0,
+	}
 loop:
-	for _, file := range fileSender.Files {
+	for _, file := range fs.Files {
 		select {
-		case <-fileSender.done:
-			fileSender.exit()
+		case <-fs.done:
+			fs.exit()
 			break loop
 		default:
-			fileSender.setup(file)
-			fileSender.send(file)
+			h = fs.setup(file, h)
+			h = fs.send(file, h)
 			// Close the sent file
 			file.Close()
 		}
 	}
-	fileSender.exit()
+	fs.exit()
 }
 
-func (fileSender *FileSender) exit() {
+func (fs *FileSender) exit() {
 	// Broadcast an EXIT Segment
 	log.Info.Println("Send an EXIT message to receivers.")
-	fileSender.Write(datagram.New(header.EXIT, 0, nil).Bytes())
+	fs.Write(datagram.New(header.EXIT, 0, nil).Bytes())
 }
 
 // send starts sending the file in terms of packet
 // This method makes sure all receivers received the file and maintains a
 // sending window
-func (fileSender *FileSender) send(file *os.File) {
+func (fs *FileSender) send(file *os.File, first header.Header) header.Header {
 	var (
 		// the current header
-		h = header.Header{
-			Flag:     header.RED,
-			Sequence: 0,
-		}
+		h              = first
 		doneReceiveACK = make(chan struct{})
 		waitReceiveACK sync.WaitGroup
 		// closure to get the next payload... omg, this is magic @@
@@ -105,17 +106,17 @@ func (fileSender *FileSender) send(file *os.File) {
 		// A function to broadcast payload with a header
 		broadcastSegmentWithTimeout = func(h header.Header, payload []byte) {
 			// Create a new auto sent segment
-			timeoutSegment := fileSender.newTimeoutSegment(h, payload)
+			timeoutSegment := fs.newTimeoutSegment(h, payload)
 			// start broadcasting this segment
 			timeoutSegment.Start(nil)
 			// Add the segment to the window
 			log.Debug.Printf("BROADCAST: Add segment to the window: segment header: %#v", timeoutSegment.Header())
-			fileSender.window.Add(timeoutSegment)
+			fs.window.Add(timeoutSegment)
 		}
 	)
 	waitReceiveACK.Add(1)
 	// Start a new thread that listens to acknowlegement
-	go fileSender.handleACK(doneReceiveACK, &waitReceiveACK)
+	go fs.handleACK(doneReceiveACK, &waitReceiveACK)
 	log.Info.Printf("BROADCAST: Start broadcasting file: file's name \"%s\"", file.Name())
 	for payload := next(file); len(payload) != 0; payload = next(file) {
 		broadcastSegmentWithTimeout(h, payload)
@@ -125,10 +126,11 @@ func (fileSender *FileSender) send(file *os.File) {
 	// Set the header to EOF
 	_ = h.EOF()
 	broadcastSegmentWithTimeout(h, nil)
-	h = h.NextInSequence()
 	close(doneReceiveACK)
 	// Wait until everyone acknowledged the packets
 	waitReceiveACK.Wait()
+	// Return the next header in sequence
+	return h.NextInSequence()
 }
 
 type receiverResponse struct {
@@ -136,7 +138,7 @@ type receiverResponse struct {
 	addr net.Addr
 }
 
-func (fileSender *FileSender) listenResponse(doneListen <-chan struct{},
+func (fs *FileSender) listenResponse(doneListen <-chan struct{},
 	newResponse chan<- receiverResponse, wg *sync.WaitGroup) {
 	log.Debug.Println("Waiting for ACKs: Start receiving ACK reponses")
 loop:
@@ -148,10 +150,10 @@ loop:
 			// RECEIVE ACKed HEADER segment FROM RECEIVERS
 			var data = make([]byte, header.HeaderSizeInBytes)
 			// Set the read deadline to the unresponsive time
-			fileSender.SetReadDeadline(
-				time.Now().Add(fileSender.UnresponsiveTimeout))
+			fs.SetReadDeadline(
+				time.Now().Add(fs.UnresponsiveTimeout))
 			// Read the packet
-			size, addr, err := fileSender.ReadFrom(data)
+			size, addr, err := fs.ReadFrom(data)
 			if err != nil {
 				if err, ok := err.(net.Error); ok && err.Timeout() {
 					log.Info.Println("Waiting for ACKs: timeout.")
@@ -180,7 +182,7 @@ loop:
 // doneReceivingSignal is a signal that asks the method to stop receiving ACK
 // It does not mean receiveACK stop right away. receiveACK only stop when window
 // is empty ( no more segment that needs an ACK )
-func (fileSender *FileSender) handleACK(doneReceivingSignal <-chan struct{},
+func (fs *FileSender) handleACK(doneReceivingSignal <-chan struct{},
 	wg *sync.WaitGroup) {
 
 	var (
@@ -191,9 +193,9 @@ func (fileSender *FileSender) handleACK(doneReceivingSignal <-chan struct{},
 		newResponse        = make(chan receiverResponse)
 	)
 	listenResponseWait.Add(1)
-	go fileSender.listenResponse(doneListenResponse, newResponse, &listenResponseWait)
+	go fs.listenResponse(doneListenResponse, newResponse, &listenResponseWait)
 	// Set every receivers to start tracking timeout
-	for _, receiver := range fileSender.receivers {
+	for _, receiver := range fs.receivers {
 		go receiver.Timeout(unresponsiveAddr)
 	}
 loop:
@@ -201,7 +203,7 @@ loop:
 		select {
 		case <-doneReceivingSignal:
 			// Check empty window first before exit
-			if fileSender.window.IsEmpty() {
+			if fs.window.IsEmpty() {
 				// Stop receiving response
 				close(doneListenResponse)
 				// Wait till the listenResponse process closes
@@ -210,15 +212,15 @@ loop:
 			}
 		case response := <-newResponse:
 			// Take the receiver who has the received packet's address
-			if receiverTimeout, ok := fileSender.receivers[getAddr(response.addr)]; ok {
+			if receiverTimeout, ok := fs.receivers[getAddr(response.addr)]; ok {
 				// Reset the timer
 				receiverTimeout.Reset()
-				segment := fileSender.window.Get(datagram.NewFromUDPPayload(response.data).Header)
+				segment := fs.window.Get(datagram.NewFromUDPPayload(response.data).Header)
 				if segment, ok := segment.(TimeoutSegment); ok {
 					// Marked as ACKed
 					segment.ACK(getAddr(response.addr))
 					// Check if everyone acked, marks this segment as removable
-					if segment.HadAllACKed(fileSender.receivers) {
+					if segment.HadAllACKed(fs.receivers) {
 						segment.Stop()
 					}
 				} else {
@@ -229,11 +231,11 @@ loop:
 			}
 		case addr := <-unresponsiveAddr:
 			// Get rid of the receiver
-			delete(fileSender.receivers, addr)
+			delete(fs.receivers, addr)
 		}
 	}
 	// Recover the read deadline
-	fileSender.SetReadDeadline(time.Time{})
+	fs.SetReadDeadline(time.Time{})
 	wg.Done()
 }
 
@@ -260,9 +262,9 @@ func nextPayload(file *os.File, bufferSize int) []byte {
 // filename packet after each SegmentTimeout
 // At a same time this method accepts new client with a deadline of half a second
 // The setup process lasts as long as the SetupTimeout
-func (fileSender *FileSender) setup(file *os.File) {
+func (fs *FileSender) setup(file *os.File, h header.Header) header.Header {
 	// Reset the receiver set
-	fileSender.receivers = make(map[Addr]*Receiver)
+	fs.receivers = make(map[Addr]*Receiver)
 
 	log.Info.Println("SETUP: Sending an initative (FILE) packet for file name:", file.Name())
 	var (
@@ -274,36 +276,36 @@ func (fileSender *FileSender) setup(file *os.File) {
 	)
 	responseWait.Add(1)
 	// listen to client response
-	go fileSender.listenResponse(responseDone, newResponse, &responseWait)
+	go fs.listenResponse(responseDone, newResponse, &responseWait)
 
 	// Start sending timeout segment
-	timeoutSegment = fileSender.newTimeoutSegment(
+	timeoutSegment = fs.newTimeoutSegment(
 		header.Header{
-			Flag:     header.FILE | header.RED,
-			Sequence: 0,
+			Flag:     header.FILE | h.Flag,
+			Sequence: h.Sequence,
 		}, []byte(file.Name()))
 	// Start broadcasting the segment periodically
 	timeoutSegment.Start(nil)
 	// Create a timer
-	timer := time.NewTimer(fileSender.SetupTimeout).C
+	timer := time.NewTimer(fs.SetupTimeout).C
 loop:
 	for {
 		select {
 		case response := <-newResponse:
 			go log.Info.Println("SETUP: New client accepted: address @", response.addr.String())
 			// Add the receiver to the set
-			fileSender.receivers[getAddr(response.addr)] =
-				NewReceiver(getAddr(response.addr), fileSender.UnresponsiveTimeout)
+			fs.receivers[getAddr(response.addr)] =
+				NewReceiver(getAddr(response.addr), fs.UnresponsiveTimeout)
 		case <-timer:
 			// No receiver: keep setting up
-			if len(fileSender.receivers) == 0 {
+			if len(fs.receivers) == 0 {
 				go log.Info.Println("SETUP: no receiver: keep waiting for new connections.")
 				// Reset the timer
-				timer = time.NewTimer(fileSender.SetupTimeout).C
+				timer = time.NewTimer(fs.SetupTimeout).C
 			} else {
 				go func() {
 					log.Info.Println("SETUP: TIMEOUT & FINISH. Start sending file to the following client(s): ")
-					for rc := range fileSender.receivers {
+					for rc := range fs.receivers {
 						log.Info.Printf("\t%s", rc)
 					}
 				}()
@@ -316,20 +318,21 @@ loop:
 			}
 		}
 	}
+	return h.NextInSequence()
 }
 
 // netTimeoutSegment creates an timeout segment corresponding to this FileSender
-func (fileSender *FileSender) newTimeoutSegment(
+func (fs *FileSender) newTimeoutSegment(
 	header header.Header,
 	payload []byte) TimeoutSegment {
 	return newTimeoutSegment(
 		datagram.NewWithHeader(header, payload),
-		fileSender.UDPConn,
-		fileSender.SegmentTimeout,
+		fs.UDPConn,
+		fs.SegmentTimeout,
 	)
 }
 
 // Done signifies the fileSender that it needs to be stopped
-func (fileSender *FileSender) Done() {
-	close(fileSender.done)
+func (fs *FileSender) Done() {
+	close(fs.done)
 }
