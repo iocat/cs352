@@ -41,7 +41,12 @@ func createDir(outputDir string) error {
 	var (
 		err error
 	)
-	if err = os.Mkdir(outputDir, os.ModeDir); err != nil {
+	if _, err = os.Stat(outputDir); err != nil {
+		if os.IsNotExist(err) {
+			if err = os.Mkdir(outputDir, 0711); err != nil {
+				return err
+			}
+		}
 		return err
 	}
 	return nil
