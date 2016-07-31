@@ -26,6 +26,7 @@ func parseArgs(args []string) (port, drop int, err error) {
 
 var port = flag.Int("addr", 8000, "the port number to listen to")
 var droppingChance = flag.Int("drop", 0, "the packet dropping chance of the file receiver")
+var out = flag.String("out", "./downloads", "the output folder for receiving files")
 
 func main() {
 	flag.Parse()
@@ -38,6 +39,6 @@ func main() {
 	if err != nil {
 		log.Warning.Fatalf("connect through udp: %s", err)
 	}
-	var fr = filereceiver.New(udpConn, *droppingChance)
-	fr.ReceiveFiles(nil)
+	var fr = filereceiver.New(*out, udpConn, *droppingChance)
+	fr.ReceiveFiles()
 }

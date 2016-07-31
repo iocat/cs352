@@ -2,10 +2,10 @@ package filereceiver
 
 import (
 	"errors"
-	"fmt"
 	"math/rand"
 	"net"
 	"os"
+	"path/filepath"
 
 	"github.com/iocat/rutgers-cs352/pa2/log"
 	"github.com/iocat/rutgers-cs352/pa2/protocol"
@@ -33,18 +33,34 @@ type FileReceiver struct {
 	reconstructData chan []byte
 	reconstructDone chan struct{}
 	currentFile     *os.File
+
+	out string
+}
+
+func createDir(outputDir string) error {
+	var (
+		err error
+	)
+	if err = os.Mkdir(outputDir, os.ModeDir); err != nil {
+		return err
+	}
+	return nil
 }
 
 // New creates a new FileReceiver object
-func New(conn *net.UDPConn, droppingChance int) *FileReceiver {
+func New(outputDir string, conn *net.UDPConn, droppingChance int) *FileReceiver {
 	if droppingChance < 0 || droppingChance > 100 {
 		log.Warning.Fatal("dropping chance out of range: should be between 0 and 100")
+	}
+	if err := createDir(outputDir); err != nil {
+		log.Warning.Fatalf("cannot create %s: %s", outputDir, err)
 	}
 	return &FileReceiver{
 		UDPConn:         conn,
 		window:          window.New(protocol.WindowSize),
 		reconstructData: make(chan []byte),
 		reconstructDone: make(chan struct{}),
+		out:             outputDir,
 	}
 }
 
@@ -86,27 +102,13 @@ loop:
 	}
 }
 
-func validateDir(outputDir *os.File) error {
-	var (
-		dir os.FileInfo
-		err error
-	)
-	if dir, err = outputDir.Stat(); err != nil {
-		return err
-	}
-	if !dir.IsDir() {
-		return fmt.Errorf("%s is not a directory", outputDir.Name())
-	}
-	return nil
-}
-
 func toDrop(droppingChance int) bool {
 	return rand.Intn(100) < droppingChance
 }
 
 // ReceiveFiles starts receiving files
 // outputDir is the directory to write the downloaded files to
-func (fr *FileReceiver) ReceiveFiles(outputDir *os.File) {
+func (fr *FileReceiver) ReceiveFiles() {
 	var (
 		newData       = make(chan []byte)
 		stopReceiving = make(chan struct{})
@@ -194,7 +196,9 @@ func (fr *FileReceiver) handleSegment(segment *receiverSegment) error {
 	switch {
 	case segment.IsFILE():
 		if fr.currentFile == nil {
-			fr.currentFile, err = os.Create(string(segment.Payload))
+			fp := string(segment.Payload)
+			fp = filepath.Join(fr.out, filepath.Base(fp))
+			fr.currentFile, err = os.Create(fp)
 			if err != nil {
 				log.Warning.Fatalf("Unable to create file: %s", err)
 			}
