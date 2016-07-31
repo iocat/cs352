@@ -15,7 +15,7 @@ var broadcastAddr = flag.String("baddr", "255.255.255.255",
 	"The broadcast address this sender is broadcasting to")
 
 var listeningPort = flag.Int("port", 9000,
-	fmt.Sprintf("The port number the sender receives the receiver replies, must not be the broadcast port%d",
+	fmt.Sprintf("The port number this sender receives ACKs, must not be the broadcast port% d",
 		protocol.BroadcastPort))
 
 func main() {

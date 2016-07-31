@@ -12,7 +12,7 @@ import (
 	"github.com/iocat/rutgers-cs352/pa2/protocol"
 )
 
-var port = flag.Int("port", 9000, "A port number to reply to the sender")
+var port = flag.Int("port", 9000, "A port number to send ACK to the sender")
 var drop = flag.Int("drop", 0, "The packet dropping chance of the file receiver")
 var out = flag.String("out", "./downloads", "The output folder for receiving files")
 
