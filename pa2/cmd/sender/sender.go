@@ -4,6 +4,7 @@ import (
 	"flag"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/iocat/rutgers-cs352/pa2/filesender"
 	"github.com/iocat/rutgers-cs352/pa2/log"
@@ -32,12 +33,17 @@ func main() {
 		files = append(files, open)
 	}
 
-	broadcastAddr, err := net.ResolveUDPAddr("udp", *udpAddr)
+	localAddr, err := net.ResolveUDPAddr("udp", ":"+strings.Split(*udpAddr, ":")[1])
 	if err != nil {
-		log.Warning.Fatalf("resolve udp address: %s", err)
+		log.Warning.Fatalf("resolve local address: %s", err)
 	}
 
-	udpConn, err := net.DialUDP("udp", nil, broadcastAddr)
+	broadcastAddr, err := net.ResolveUDPAddr("udp", *udpAddr)
+	if err != nil {
+		log.Warning.Fatalf("resolve udp broadcast address: %s", err)
+	}
+
+	udpConn, err := net.DialUDP("udp", localAddr, broadcastAddr)
 	if err != nil {
 		log.Warning.Fatalf("connect to the address: %s", err)
 	}
