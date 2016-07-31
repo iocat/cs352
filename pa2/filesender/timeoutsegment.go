@@ -7,24 +7,7 @@ import (
 	"github.com/iocat/rutgers-cs352/pa2/protocol/datagram"
 	"github.com/iocat/rutgers-cs352/pa2/protocol/datagram/header"
 	"github.com/iocat/rutgers-cs352/pa2/protocol/sender"
-	"github.com/iocat/rutgers-cs352/pa2/protocol/window"
 )
-
-// TimeoutSegment represents a window.Segment that has a timeout sender
-// associated with it
-type TimeoutSegment interface {
-	window.Segment
-	sender.TimeoutSender
-
-	// ACK marks a particular address had ACKed the packet
-	ACK(Addr)
-	// HadACKed checks whether this packet had been ACKed by the given address
-	HadACKed(Addr) bool
-
-	// HadAllACKed checks whether the ACKed addresses contains every address in
-	// the given address
-	HadAllACKed(map[Addr]*Receiver) bool
-}
 
 // timeoutSegment is a concrete implementation of ITimeoutSegment
 type timeoutSegment struct {
@@ -82,7 +65,7 @@ func (tSegment *timeoutSegment) Stop() {
 func newTimeoutSegment(
 	segment *datagram.Segment,
 	senderSocket *net.UDPConn,
-	senderTimeout time.Duration) TimeoutSegment {
+	senderTimeout time.Duration) *timeoutSegment {
 	return &timeoutSegment{
 		segment:           segment,
 		TimeoutSender:     sender.NewTimeout(senderSocket, segment, senderTimeout),

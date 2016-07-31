@@ -231,7 +231,7 @@ loop:
 						segment.Stop()
 					}
 				} else {
-					log.Debug.Fatalln("Handle ACK: Invalid segment type in the window. Expect: TimeoutSegment")
+					log.Debug.Fatalln("Handle ACK: Invalid segment type in the window. Expect: *timeoutSegment")
 				}
 			} else {
 				log.Info.Printf("Handle ACK: Received packet from an unknown receiver @%s", response.addr.String())
@@ -273,7 +273,7 @@ func (fs *FileSender) setup(file *os.File, h header.Header) header.Header {
 
 	log.Info.Println("SETUP: Sending an initative (FILE) packet for file name:", file.Name())
 	var (
-		timeoutSegment TimeoutSegment
+		timeoutSegment *timeoutSegment
 
 		newResponse  = make(chan receiverResponse)
 		responseDone = make(chan struct{})
@@ -297,10 +297,14 @@ loop:
 	for {
 		select {
 		case response := <-newResponse:
-			go log.Info.Println("SETUP: New client accepted: address @", response.addr.String())
-			// Add the receiver to the set
-			fs.receivers[getAddr(response.addr)] =
-				NewReceiver(getAddr(response.addr), fs.UnresponsiveTimeout)
+			if _, ok := fs.receivers[getAddr(response.addr)]; ok {
+				continue
+			} else {
+				go log.Info.Println("SETUP: New client accepted: address @", response.addr.String())
+				// Add the receiver to the set
+				fs.receivers[getAddr(response.addr)] =
+					NewReceiver(getAddr(response.addr), fs.UnresponsiveTimeout)
+			}
 		case <-timer:
 			// No receiver: keep setting up
 			if len(fs.receivers) == 0 {
@@ -329,7 +333,7 @@ loop:
 // netTimeoutSegment creates an timeout segment corresponding to this FileSender
 func (fs *FileSender) newTimeoutSegment(
 	header header.Header,
-	payload []byte) TimeoutSegment {
+	payload []byte) *timeoutSegment {
 	return newTimeoutSegment(
 		datagram.NewWithHeader(header, payload),
 		fs.broadcast,
