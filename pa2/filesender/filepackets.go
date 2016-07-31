@@ -42,28 +42,34 @@ type FileSender struct {
 	window *window.Window
 
 	// The broadcasting socket
-	*net.UDPConn
+	broadcast *net.UDPConn
+
+	listen *net.UDPConn
 
 	done chan struct{}
 }
 
 // New creates a new file sender
 // Caller must provides conn, which is the broadcasting socket
-func New(conn *net.UDPConn, files []*os.File) *FileSender {
+func New(broadcast *net.UDPConn, listen *net.UDPConn, files []*os.File) *FileSender {
 	fileSender := &FileSender{
 		SegmentTimeout:      protocol.SegmentTimeout,
 		SetupTimeout:        protocol.SetupTimeout,
 		UnresponsiveTimeout: protocol.UnresponsiveTimeout,
-		UDPConn:             conn,
-		window:              window.New(protocol.WindowSize),
-		Files:               files,
-		done:                make(chan struct{}),
+
+		window:    window.New(protocol.WindowSize),
+		Files:     files,
+		broadcast: broadcast,
+		listen:    listen,
+		done:      make(chan struct{}),
 	}
 	return fileSender
 }
 
 // Run is a blocking call that starts the sending server
 func (fs *FileSender) Run() {
+	defer fs.broadcast.Close()
+	defer fs.listen.Close()
 	h := header.Header{
 		Flag:     header.RED,
 		Sequence: 0,
@@ -87,7 +93,7 @@ loop:
 func (fs *FileSender) exit() {
 	// Broadcast an EXIT Segment
 	log.Info.Println("Send an EXIT message to receivers.")
-	fs.Write(datagram.New(header.EXIT, 0, nil).Bytes())
+	fs.broadcast.Write(datagram.New(header.EXIT, 0, nil).Bytes())
 }
 
 // send starts sending the file in terms of packet
@@ -150,10 +156,10 @@ loop:
 			// RECEIVE ACKed HEADER segment FROM RECEIVERS
 			var data = make([]byte, header.HeaderSizeInBytes)
 			// Set the read deadline to the unresponsive time
-			fs.SetReadDeadline(
+			fs.listen.SetReadDeadline(
 				time.Now().Add(fs.UnresponsiveTimeout))
 			// Read the packet
-			size, addr, err := fs.ReadFromUDP(data[0:])
+			size, addr, err := fs.listen.ReadFromUDP(data[0:])
 			if err != nil {
 				if err, ok := err.(net.Error); ok && err.Timeout() {
 					log.Warning.Println("Waiting for ACKs: timeout.")
@@ -235,8 +241,6 @@ loop:
 			delete(fs.receivers, addr)
 		}
 	}
-	// Recover the read deadline
-	fs.SetReadDeadline(time.Time{})
 	wg.Done()
 }
 
@@ -328,7 +332,7 @@ func (fs *FileSender) newTimeoutSegment(
 	payload []byte) TimeoutSegment {
 	return newTimeoutSegment(
 		datagram.NewWithHeader(header, payload),
-		fs.UDPConn,
+		fs.broadcast,
 		fs.SegmentTimeout,
 	)
 }

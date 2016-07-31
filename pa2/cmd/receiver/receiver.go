@@ -9,7 +9,12 @@ import (
 
 	"github.com/iocat/rutgers-cs352/pa2/filereceiver"
 	"github.com/iocat/rutgers-cs352/pa2/log"
+	"github.com/iocat/rutgers-cs352/pa2/protocol"
 )
+
+var port = flag.Int("port", 9000, "A port number to reply to the sender")
+var drop = flag.Int("drop", 0, "The packet dropping chance of the file receiver")
+var out = flag.String("out", "./downloads", "The output folder for receiving files")
 
 func parseArgs(args []string) (port, drop int, err error) {
 	if port, err = strconv.Atoi(args[1]); err != nil {
@@ -24,21 +29,18 @@ func parseArgs(args []string) (port, drop int, err error) {
 	return
 }
 
-var port = flag.Int("addr", 8000, "the port number to listen to")
-var droppingChance = flag.Int("drop", 0, "the packet dropping chance of the file receiver")
-var out = flag.String("out", "./downloads", "the output folder for receiving files")
-
 func main() {
 	flag.Parse()
-	// Start a new receiver
-	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", *port))
+	// Set up a broadcast address
+	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", protocol.BroadcastPort))
 	if err != nil {
 		log.Warning.Fatalf("resolve address: %s", err)
 	}
+	// Set up a listening socket
 	udpConn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		log.Warning.Fatalf("connect through udp: %s", err)
 	}
-	var fr = filereceiver.New(*out, udpConn, *droppingChance)
+	var fr = filereceiver.New(*out, udpConn, *drop, *port)
 	fr.ReceiveFiles()
 }

@@ -28,7 +28,12 @@ type FileReceiver struct {
 	// The window this FileReceiver uses to store data
 	window *window.Window
 
-	*net.UDPConn
+	// The socket that this FileReceiver uses to send and replies to
+	// the broadcaster
+	socket *net.UDPConn
+
+	// The port to replies back to the sender
+	senderPort int
 
 	reconstructData chan []byte
 	reconstructDone chan struct{}
@@ -53,7 +58,7 @@ func createDir(outputDir string) error {
 }
 
 // New creates a new FileReceiver object
-func New(outputDir string, conn *net.UDPConn, droppingChance int) *FileReceiver {
+func New(outputDir string, conn *net.UDPConn, droppingChance int, senderPort int) *FileReceiver {
 	if droppingChance < 0 || droppingChance > 100 {
 		log.Warning.Fatal("dropping chance out of range: should be between 0 and 100")
 	}
@@ -61,12 +66,17 @@ func New(outputDir string, conn *net.UDPConn, droppingChance int) *FileReceiver 
 		log.Warning.Fatalf("cannot create %s: %s", outputDir, err)
 	}
 	return &FileReceiver{
-		UDPConn:         conn,
+		socket:          conn,
 		window:          window.New(protocol.WindowSize),
 		reconstructData: make(chan []byte),
 		reconstructDone: make(chan struct{}),
+		senderPort:      senderPort,
 		out:             outputDir,
 	}
+}
+
+func (fr *FileReceiver) switchSenderAddrPort() {
+	fr.senderAddr.Port = fr.senderPort
 }
 
 // receiveData receives data buffer and send it to the newData channel
@@ -83,16 +93,17 @@ loop:
 			break loop
 		default:
 			data = make([]byte, protocol.SegmentSize)
-			length, addr, err := fr.ReadFromUDP(data)
+			length, addr, err := fr.socket.ReadFromUDP(data)
 			if err != nil {
 				log.Warning.Printf("receive data error: %s", err)
 			}
 			if fr.senderAddr == nil {
 				log.Info.Printf("new sender dectected: set this %s as an official sender", addr.String())
 				fr.senderAddr = addr
+				fr.switchSenderAddrPort()
 			}
 			// Check sender address
-			if addr.String() != fr.senderAddr.String() {
+			if addr.IP.String() != fr.senderAddr.IP.String() {
 				log.Warning.Printf("receive broadcast packet from unknown sender host, got %s, expected %s",
 					addr.String(), fr.senderAddr.String())
 			}
@@ -114,7 +125,7 @@ func toDrop(droppingChance int) bool {
 // ACK sends an ACK back to the sender
 func (fr *FileReceiver) ACK(segment *datagram.Segment) {
 	// Accepted: Send an ACK back
-	sender.New(fr.UDPConn,
+	sender.New(fr.socket,
 		datagram.New(header.ACK|segment.Header.Flag,
 			segment.Header.Sequence,
 			nil)).

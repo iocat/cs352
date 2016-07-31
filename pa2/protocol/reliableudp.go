@@ -9,6 +9,9 @@ import (
 )
 
 const (
+	// BroadcastPort is the port number the sender and the receivers
+	// agreed on in advance
+	BroadcastPort = 9001
 	// SegmentTimeout is the timeout before the sender resends
 	// the same packet
 	SegmentTimeout = 1500 * time.Millisecond
