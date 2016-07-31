@@ -111,6 +111,16 @@ func toDrop(droppingChance int) bool {
 	return rand.Intn(100) < droppingChance
 }
 
+// ACK sends an ACK back to the sender
+func (fr *FileReceiver) ACK(segment *datagram.Segment) {
+	// Accepted: Send an ACK back
+	sender.New(fr.UDPConn,
+		datagram.New(header.ACK|segment.Header.Flag,
+			segment.Header.Sequence,
+			nil)).
+		SendTo(fr.senderAddr)
+}
+
 // ReceiveFiles starts receiving files
 // outputDir is the directory to write the downloaded files to
 func (fr *FileReceiver) ReceiveFiles() {
@@ -133,14 +143,9 @@ loop:
 				segment.Header())
 			continue
 		} else {
-			log.Info.Printf("received %#v: send an ACK back.", segment.Header())
-			// Accepted: Send an ACK back
-			sender.
-				New(fr.UDPConn,
-					datagram.New(header.ACK|segment.Header().Flag,
-						segment.Header().Sequence,
-						nil)).
-				SendTo(fr.senderAddr)
+			log.Info.Printf("received %#v: send an ACK back to %s.",
+				segment.Header(), fr.senderAddr)
+			fr.ACK(segment.Segment)
 		}
 		if compRes := segment.Header().Compare(expectedHeader); compRes == 0 {
 			// Handle an inorder segment
