@@ -9,7 +9,7 @@ import (
 	"github.com/iocat/rutgers-cs352/pa2/protocol/sender"
 )
 
-// timeoutSegment is a concrete implementation of ITimeoutSegment
+// timeoutSegment is a concrete implementation of window.Segment
 type timeoutSegment struct {
 	segment *datagram.Segment
 	sender.TimeoutSender

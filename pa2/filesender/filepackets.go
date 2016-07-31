@@ -218,10 +218,9 @@ loop:
 				break loop
 			}
 		case response := <-newResponse:
-			// Take the receiver who has the received packet's address
-			if receiverTimeout, ok := fs.receivers[getAddr(response.addr)]; ok {
+			if receiver, ok := fs.receivers[getAddr(response.addr)]; ok {
 				// Reset the timer
-				receiverTimeout.Reset()
+				receiver.Reset()
 				segment := fs.window.Get(datagram.NewFromUDPPayload(response.data).Header)
 				if segment, ok := segment.(*timeoutSegment); ok {
 					// Marked as ACKed
@@ -231,7 +230,7 @@ loop:
 						segment.Stop()
 					}
 				} else {
-					log.Debug.Fatalln("Handle ACK: Invalid segment type in the window. Expect: *timeoutSegment")
+					log.Debug.Fatalf("Handle ACK: Invalid segment type in the window. Got %T, expected: *timeoutSegment", segment)
 				}
 			} else {
 				log.Info.Printf("Handle ACK: Received packet from an unknown receiver @%s", response.addr.String())
