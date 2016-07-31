@@ -223,7 +223,7 @@ loop:
 				// Reset the timer
 				receiverTimeout.Reset()
 				segment := fs.window.Get(datagram.NewFromUDPPayload(response.data).Header)
-				if segment, ok := segment.(TimeoutSegment); ok {
+				if segment, ok := segment.(*timeoutSegment); ok {
 					// Marked as ACKed
 					segment.ACK(getAddr(response.addr))
 					// Check if everyone acked, marks this segment as removable
