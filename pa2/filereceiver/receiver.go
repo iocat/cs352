@@ -88,7 +88,7 @@ loop:
 				log.Warning.Printf("receive data error: %s", err)
 			}
 			if fr.senderAddr == nil {
-				log.Info.Println("new sender dectected: set this sender as an official sender")
+				log.Info.Printf("new sender dectected: set this %s as an official sender", addr.String())
 				fr.senderAddr = addr
 			}
 			// Check sender address
@@ -135,13 +135,13 @@ loop:
 		} else {
 			log.Info.Printf("received %#v: send an ACK back.", segment.Header())
 			// Accepted: Send an ACK back
-			go sender.New(fr.UDPConn,
-				datagram.New(
-					header.ACK|segment.Header().Flag,
-					segment.Header().Sequence,
-					nil)).SendTo(fr.senderAddr)
+			sender.
+				New(fr.UDPConn,
+					datagram.New(header.ACK|segment.Header().Flag,
+						segment.Header().Sequence,
+						nil)).
+				SendTo(fr.senderAddr)
 		}
-
 		if compRes := segment.Header().Compare(expectedHeader); compRes == 0 {
 			// Handle an inorder segment
 			if fr.exitableHandleSegment(segment) {
@@ -172,13 +172,13 @@ loop:
 				segment.Header(), expectedHeader)
 			// This packet is later in the sequence
 			if compRes > 0 {
-				log.Info.Printf("packet with header %#v cached.", segment.Header())
+				log.Debug.Printf("packet with header %#v cached.", segment.Header())
 				// Go ahead and cache this packet (non-blocking cache)
 				go fr.window.Add(segment)
 			} else {
 				// This packet is received already
 				// compRes < 0 : packet received
-				log.Info.Printf("packet with header %#v received: pass.", segment.Header())
+				log.Debug.Printf("packet with header %#v received: pass.", segment.Header())
 			}
 
 		}

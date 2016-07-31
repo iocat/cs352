@@ -153,10 +153,10 @@ loop:
 			fs.SetReadDeadline(
 				time.Now().Add(fs.UnresponsiveTimeout))
 			// Read the packet
-			size, addr, err := fs.ReadFrom(data)
+			size, addr, err := fs.ReadFrom(data[0:])
 			if err != nil {
 				if err, ok := err.(net.Error); ok && err.Timeout() {
-					log.Info.Println("Waiting for ACKs: timeout.")
+					log.Warning.Println("Waiting for ACKs: timeout.")
 					break
 				}
 				log.Warning.Println("Waiting for ACKs: error: ", err)
@@ -166,6 +166,7 @@ loop:
 			if size < header.HeaderSizeInBytes {
 				log.Debug.Fatalln("Waiting for ACKs: the received packet size is not valid: expected",
 					header.HeaderSizeInBytes)
+				continue
 			}
 			newResponse <- receiverResponse{
 				data: data[:size],
