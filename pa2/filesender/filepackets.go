@@ -221,17 +221,14 @@ loop:
 			if receiver, ok := fs.receivers[getAddr(response.addr)]; ok {
 				// Reset the timer
 				receiver.Reset()
-				segment := fs.window.Get(datagram.NewFromUDPPayload(response.data).Header)
-				if segment, ok := segment.(*timeoutSegment); ok {
-					// Marked as ACKed
-					segment.ACK(getAddr(response.addr))
-					// Check if everyone acked, marks this segment as removable
-					if segment.HadAllACKed(fs.receivers) {
-						segment.Stop()
-					}
-				} else {
-					log.Debug.Fatalf("Handle ACK: Invalid segment type in the window. Got %T, expected: *timeoutSegment", segment)
+				segment := fs.window.Get(datagram.NewFromUDPPayload(response.data).Header).(*timeoutSegment)
+				// Marked as ACKed
+				segment.ACK(getAddr(response.addr))
+				// Check if everyone acked, marks this segment as removable
+				if segment.HadAllACKed(fs.receivers) {
+					segment.Stop()
 				}
+
 			} else {
 				log.Info.Printf("Handle ACK: Received packet from an unknown receiver @%s", response.addr.String())
 			}
