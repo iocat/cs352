@@ -255,6 +255,9 @@ loop:
 			log.Warning.Printf("client %s is unresponsive. Removed client.", addr)
 			// Get rid of the receiver
 			delete(fs.receivers, addr)
+			if len(fs.receivers) == 0 {
+				log.Warning.Fatal("no receivers left. Exit.")
+			}
 		}
 	}
 	wg.Done()

@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/iocat/rutgers-cs352/pa2/log"
 	"github.com/iocat/rutgers-cs352/pa2/protocol"
@@ -121,7 +122,8 @@ loop:
 }
 
 func toDrop(droppingChance int) bool {
-	return rand.Intn(100) < droppingChance
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	return r.Intn(100) <= droppingChance
 }
 
 // ACK sends an ACK back to the sender
@@ -156,7 +158,7 @@ loop:
 				segment.Header())
 			continue
 		} else {
-			//log.Info.Printf("received %#v: send an ACK back to %s.",	segment.Header(), fr.senderAddr)
+			log.Info.Printf("received %#v: send an ACK back to %s.", segment.Header(), fr.senderAddr)
 			// Acknowledge this packet on another thread
 			fr.ACK(segment.Segment)
 		}
