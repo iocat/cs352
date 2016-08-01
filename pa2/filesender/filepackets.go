@@ -11,6 +11,7 @@ import (
 	"github.com/iocat/rutgers-cs352/pa2/protocol"
 	"github.com/iocat/rutgers-cs352/pa2/protocol/datagram"
 	"github.com/iocat/rutgers-cs352/pa2/protocol/datagram/header"
+	"github.com/iocat/rutgers-cs352/pa2/protocol/sender"
 	"github.com/iocat/rutgers-cs352/pa2/protocol/window"
 )
 
@@ -70,36 +71,51 @@ func New(broadcast *net.UDPConn, listen *net.UDPConn, files []*os.File) *FileSen
 func (fs *FileSender) Run() {
 	defer fs.broadcast.Close()
 	defer fs.listen.Close()
-	h := header.Header{
-		Flag:     header.RED,
-		Sequence: 0,
-	}
-loop:
-	for _, file := range fs.Files {
-		select {
-		case <-fs.done:
-			fs.exit()
-			break loop
-		default:
-			h = fs.setup(file, h)
-			h = fs.send(file, h)
-			// Close the sent file
-			file.Close()
+	var (
+		h = header.Header{
+			Flag:     header.RED,
+			Sequence: 0,
 		}
+		toExit = false
+	)
+	for i, file := range fs.Files {
+		if i == len(fs.Files)-1 {
+			toExit = true
+		}
+		h = fs.setup(file, h)
+		h = fs.send(file, h, toExit)
+		// Close the sent file
+		file.Close()
 	}
-	fs.exit()
 }
 
-func (fs *FileSender) exit() {
+func decorate(h header.Header, flags ...header.Flag) header.Header {
+	var result = h
+	for _, f := range flags {
+		result.Flag |= f
+	}
+	return result
+}
+
+func (fs *FileSender) exit(h header.Header) header.Header {
 	// Broadcast an EXIT Segment
-	log.Info.Println("Send an EXIT message to receivers.")
-	fs.broadcast.Write(datagram.New(header.EXIT, 0, nil).Bytes())
+	fs.broadcastSegmentWithTimeout(decorate(h, header.EXIT), nil)
+	return h.Next()
+}
+
+func (fs *FileSender) broadcastSegmentWithTimeout(h header.Header, payload []byte) {
+	// Create a new auto sent segment
+	timeoutSegment := fs.newTimeoutSegment(h, payload)
+	// start broadcasting this segment
+	timeoutSegment.Start(nil)
+	// Add the segment to the window
+	fs.window.Add(timeoutSegment)
 }
 
 // send starts sending the file in terms of packet
 // This method makes sure all receivers received the file and maintains a
 // sending window
-func (fs *FileSender) send(file *os.File, first header.Header) header.Header {
+func (fs *FileSender) send(file *os.File, first header.Header, toExit bool) header.Header {
 	var (
 		// the current header
 		h              = first
@@ -109,34 +125,31 @@ func (fs *FileSender) send(file *os.File, first header.Header) header.Header {
 		next = func(file *os.File) []byte {
 			return nextPayload(file, protocol.PayloadSize)
 		}
-		// A function to broadcast payload with a header
-		broadcastSegmentWithTimeout = func(h header.Header, payload []byte) {
-			// Create a new auto sent segment
-			timeoutSegment := fs.newTimeoutSegment(h, payload)
-			// start broadcasting this segment
-			timeoutSegment.Start(nil)
-			// Add the segment to the window
-			log.Debug.Printf("BROADCAST: Add segment to the window: segment header: %#v", timeoutSegment.Header())
-			fs.window.Add(timeoutSegment)
-		}
 	)
 	waitReceiveACK.Add(1)
 	// Start a new thread that listens to acknowlegement
 	go fs.handleACK(doneReceiveACK, &waitReceiveACK)
 	log.Info.Printf("BROADCAST: Start broadcasting file: file's name \"%s\"", file.Name())
 	for payload := next(file); len(payload) != 0; payload = next(file) {
-		broadcastSegmentWithTimeout(h, payload)
+		fs.broadcastSegmentWithTimeout(h, payload)
 		// Get the next header in the sequence
 		h = h.Next()
 	}
 	// Set the header to EOF
 	_ = h.EOF()
-	broadcastSegmentWithTimeout(h, nil)
+	fs.broadcastSegmentWithTimeout(h, nil)
+	h = h.Next()
+	// Send an exit packet if this is the last file
+	if toExit {
+		_ = h.EXIT()
+		fs.broadcastSegmentWithTimeout(h, nil)
+		h = h.Next()
+	}
+	// Signaling the receiving ACK thread to stop then wait until every ACKs received
 	close(doneReceiveACK)
-	// Wait until everyone acknowledged the packets
 	waitReceiveACK.Wait()
 	// Return the next header in sequence
-	return h.Next()
+	return h
 }
 
 type receiverResponse struct {
@@ -189,7 +202,8 @@ loop:
 // doneReceivingSignal is a signal that asks the method to stop receiving ACK
 // It does not mean receiveACK stop right away. receiveACK only stop when window
 // is empty ( no more segment that needs an ACK )
-func (fs *FileSender) handleACK(doneReceivingSignal <-chan struct{},
+func (fs *FileSender) handleACK(
+	doneReceivingSignal <-chan struct{},
 	wg *sync.WaitGroup) {
 
 	var (
@@ -222,16 +236,18 @@ loop:
 				// Reset the timer
 				receiver.Reset()
 				segment := fs.window.Get(
-					datagram.NewFromUDPPayload(response.data).
-						Header.PureHeader()).(*timeoutSegment)
+					datagram.NewFromUDPPayload(response.data).Header.PureHeader())
+				if segment == nil {
+					continue
+				}
+				ts := segment.(*timeoutSegment)
 
 				// Marked as ACKed
-				segment.ACK(getAddr(response.addr))
+				ts.ACK(getAddr(response.addr))
 				// Check if everyone acked, marks this segment as removable
-				if segment.HadAllACKed(fs.receivers) {
-					segment.Stop()
+				if ts.HadAllACKed(fs.receivers) {
+					ts.Stop()
 				}
-
 			} else {
 				log.Info.Printf("Handle ACK: Received packet from an unknown receiver @%s", response.addr.String())
 			}
@@ -333,11 +349,12 @@ loop:
 func (fs *FileSender) newTimeoutSegment(
 	header header.Header,
 	payload []byte) *timeoutSegment {
-	return newTimeoutSegment(
-		datagram.NewWithHeader(header, payload),
-		fs.broadcast,
-		fs.SegmentTimeout,
-	)
+	return &timeoutSegment{
+		segment:           datagram.NewWithHeader(header, payload),
+		TimeoutSender:     sender.NewTimeout(fs.broadcast, datagram.NewWithHeader(header, payload), fs.SegmentTimeout),
+		receiverACKedAddr: make(map[Addr]bool),
+		done:              make(chan struct{}),
+	}
 }
 
 // Done signifies the fileSender that it needs to be stopped

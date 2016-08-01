@@ -47,12 +47,24 @@ type Window struct {
 // Add adds a new segment to the window
 // This method blocks if the window is full, if there are empty spaces,
 // This method returns right away and add the segment to the window.
-// If header duplication occurs the method panics
+// If header duplication occurs the method drops the segment
 func (window *Window) Add(segment Segment) {
 	// Lock if the map is full
 	window.segmentCount <- struct{}{}
 	// Send the segment to the adder
 	window.segmentAdder <- segment
+}
+
+// TryAdd is a mon-blocking version of Add: this method tries to add a new
+// segment if there are available space. Otherwise, it returns right away and
+// the segment is discarded
+func (window *Window) TryAdd(segment Segment) {
+	select {
+	case window.segmentCount <- struct{}{}:
+		window.segmentAdder <- segment
+	default:
+
+	}
 }
 
 func (window *Window) add(segment Segment) {
@@ -76,6 +88,10 @@ func (window *Window) add(segment Segment) {
 // Get might returns nil if no segment corresponds to the provided header is in
 // the window
 func (window *Window) Get(h header.Header) Segment {
+	if h.IsACK() || h.IsNACK() || h.IsEOF() || h.IsEXIT() || h.IsFILE() {
+		log.Warning.Panic("the header is not either RED or BLUE")
+	}
+
 	window.getRequest <- h
 	return <-window.getResponse
 }

@@ -1,9 +1,6 @@
 package filesender
 
 import (
-	"net"
-	"time"
-
 	"github.com/iocat/rutgers-cs352/pa2/protocol/datagram"
 	"github.com/iocat/rutgers-cs352/pa2/protocol/datagram/header"
 	"github.com/iocat/rutgers-cs352/pa2/protocol/sender"
@@ -60,16 +57,4 @@ func (tSegment *timeoutSegment) Stop() {
 	close(tSegment.done)
 	// Stop the sender from retransmitting this packet
 	tSegment.TimeoutSender.Stop()
-}
-
-func newTimeoutSegment(
-	segment *datagram.Segment,
-	senderSocket *net.UDPConn,
-	senderTimeout time.Duration) *timeoutSegment {
-	return &timeoutSegment{
-		segment:           segment,
-		TimeoutSender:     sender.NewTimeout(senderSocket, segment, senderTimeout),
-		receiverACKedAddr: make(map[Addr]bool),
-		done:              make(chan struct{}),
-	}
 }

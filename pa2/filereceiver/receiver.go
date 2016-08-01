@@ -80,6 +80,8 @@ func (fr *FileReceiver) switchSenderAddrPort() {
 }
 
 // receiveData receives data buffer and send it to the newData channel
+// receiveData knows nothing about the data packet it receives. It makes sure
+// the received packets is from the acknowledged sender
 func (fr *FileReceiver) receiveData(
 	newData chan<- []byte,
 	stopSignal <-chan struct{}) {
@@ -154,10 +156,11 @@ loop:
 				segment.Header())
 			continue
 		} else {
-			log.Info.Printf("received %#v: send an ACK back to %s.",
-				segment.Header(), fr.senderAddr)
-			fr.ACK(segment.Segment)
+			//log.Info.Printf("received %#v: send an ACK back to %s.",	segment.Header(), fr.senderAddr)
+			// Acknowledge this packet on another thread
+			go fr.ACK(segment.Segment)
 		}
+
 		if compRes := segment.Header().Compare(expectedHeader); compRes == 0 {
 			// Handle an inorder segment
 			if fr.exitableHandleSegment(segment) {
@@ -167,7 +170,7 @@ loop:
 			// Keep getting the next expected window from the cached window
 		inner:
 			for {
-				if subsequent := fr.window.Get(expectedHeader); subsequent != nil {
+				if subsequent := fr.window.Get(expectedHeader.PureHeader()); subsequent != nil {
 					// Handle this segment
 					if fr.exitableHandleSegment(subsequent.(*receiverSegment)) {
 						break loop
@@ -180,21 +183,21 @@ loop:
 						log.Debug.Panic("wrong format for segment: expected a filerecever.Segment")
 					}
 				} else {
+					// Does not have the next one
 					break inner
 				}
 			}
 		} else {
-			log.Info.Printf("out of sequence packet: got %#v, expected %#v.",
-				segment.Header(), expectedHeader)
 			// This packet is later in the sequence
 			if compRes > 0 {
-				log.Debug.Printf("packet with header %#v cached.", segment.Header())
-				// Go ahead and cache this packet (non-blocking cache)
-				go fr.window.Add(segment)
+				// Check if this segment was cached or not
+				if fr.window.Get(segment.Header()) == nil {
+					// Go ahead and cache this packet if possible (non-blocking cache)
+					fr.window.TryAdd(segment)
+				}
 			} else {
 				// This packet is received already
 				// compRes < 0 : packet received
-				log.Debug.Printf("packet with header %#v received: pass.", segment.Header())
 			}
 
 		}
@@ -224,10 +227,8 @@ func (fr *FileReceiver) handleSegment(segment *receiverSegment) error {
 			if err != nil {
 				log.Warning.Fatalf("Unable to create file: %s", err)
 			}
-			go log.Info.Println("New FILE request: spawned a file reconstructing thread")
-			go reconstructFile(fr.currentFile,
-				fr.reconstructData,
-				fr.reconstructDone)
+			go log.Info.Printf("New FILE %s: spawned a file reconstructing thread", fp)
+			go reconstructFile(fr.currentFile, fr.reconstructData, fr.reconstructDone)
 		} else {
 			// File duplication
 			go log.Info.Println("duplicated FILE request: skip.")
@@ -238,13 +239,15 @@ func (fr *FileReceiver) handleSegment(segment *receiverSegment) error {
 	case segment.IsEXIT():
 		if fr.currentFile != nil {
 			// Send an eof signal
-			sendEOF(fr.reconstructData, fr.reconstructDone)
+			fr.reconstructData <- []byte{}
+			<-fr.reconstructDone
 			fr.currentFile = nil
 		}
 		return errorExit
 	case segment.IsEOF():
 		if fr.currentFile != nil {
-			sendEOF(fr.reconstructData, fr.reconstructDone)
+			fr.reconstructData <- []byte{}
+			<-fr.reconstructDone
 			fr.currentFile = nil
 		}
 	// Normal file packet
@@ -256,10 +259,4 @@ func (fr *FileReceiver) handleSegment(segment *receiverSegment) error {
 		}
 	}
 	return nil
-}
-
-func sendEOF(reconstructData chan<- []byte, reconstructDone <-chan struct{}) {
-	// Close the file and wait til the file is closed
-	reconstructData <- nil
-	<-reconstructDone
 }

@@ -14,29 +14,29 @@ import (
 // file is a file to write to
 // payloads is a channel of payload this function is listening to
 // waiter is a signaling mechanism notifies the waiting thread this is done
-func reconstructFile(
-	file io.WriteCloser,
-	payloads <-chan []byte,
+func reconstructFile(file io.WriteCloser, payloads <-chan []byte,
 	waiter chan<- struct{}) {
 	defer file.Close()
+loop:
 	for payload := range payloads {
 		if len(payload) == 0 {
+			log.Debug.Printf("reconstruct file %s: EOF.", file.(*os.File).Name())
 			// The length of the payload is 0
-			break
+			break loop
 		}
 		var (
-			length int
-			err    error
+			//length int
+			err error
 		)
-		if length, err = file.Write(payload); err != nil {
+		if /*length*/ _, err = file.Write(payload); err != nil {
 			log.Warning.Printf("reconstruct file: write to file error: %s", err)
 			return
 		}
-		go func(size int) {
+		/*go func(size int) {
 			if file, ok := file.(*os.File); ok {
 				log.Debug.Printf("reconstruct file %s: added %d bytes", file.Name(), size)
 			}
-		}(length)
+		}(length)*/
 	}
 	waiter <- struct{}{}
 }

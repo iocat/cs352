@@ -78,6 +78,7 @@ func (header Header) Compare(other Header) int {
 		this = header.PureHeader()
 		that = other.PureHeader()
 	)
+
 	if this == that {
 		return 0
 	} else if (this.IsRED() && that.IsRED()) ||
@@ -122,7 +123,7 @@ func (header Header) Next() Header {
 
 	}
 	return Header{
-		Flag:     header.Flag,
+		Flag:     header.Flag & (RED | BLUE),
 		Sequence: header.Sequence + 1,
 	}
 }
