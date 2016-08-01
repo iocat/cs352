@@ -53,8 +53,12 @@ func (tSegment *timeoutSegment) Removable() <-chan struct{} {
 // sending another package
 // Stop overrides sender.TimeoutSender.Stop()
 func (tSegment *timeoutSegment) Stop() {
-	// Signifies the sender to remove this segment
-	close(tSegment.done)
+	select {
+	case <-tSegment.done:
+	default:
+		// Signifies the sender to remove this segment
+		close(tSegment.done)
+	}
 	// Stop the sender from retransmitting this packet
 	tSegment.TimeoutSender.Stop()
 }

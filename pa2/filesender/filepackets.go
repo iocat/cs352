@@ -252,6 +252,7 @@ loop:
 				log.Info.Printf("Handle ACK: Received packet from an unknown receiver @%s", response.addr.String())
 			}
 		case addr := <-unresponsiveAddr:
+			log.Warning.Printf("client %s is unresponsive. Removed client.", addr)
 			// Get rid of the receiver
 			delete(fs.receivers, addr)
 		}
