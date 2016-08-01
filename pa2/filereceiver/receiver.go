@@ -158,7 +158,7 @@ loop:
 		} else {
 			//log.Info.Printf("received %#v: send an ACK back to %s.",	segment.Header(), fr.senderAddr)
 			// Acknowledge this packet on another thread
-			go fr.ACK(segment.Segment)
+			fr.ACK(segment.Segment)
 		}
 
 		if compRes := segment.Header().Compare(expectedHeader); compRes == 0 {
