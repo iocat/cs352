@@ -161,7 +161,6 @@ type receiverResponse struct {
 
 func (fs *FileSender) listenResponse(timeout time.Duration, doneListen <-chan struct{},
 	newResponse chan<- receiverResponse, wg *sync.WaitGroup) {
-	log.Debug.Println("Waiting for ACKs: Start receiving ACK reponses")
 loop:
 	for {
 		select {
@@ -177,7 +176,6 @@ loop:
 			size, addr, err := fs.listen.ReadFromUDP(data[0:])
 			if err != nil {
 				if err, ok := err.(net.Error); ok && err.Timeout() {
-					log.Warning.Println("Waiting for ACKs: timeout.")
 					break
 				}
 				log.Warning.Println("Waiting for ACKs: error: ", err)
@@ -196,7 +194,6 @@ loop:
 		}
 	}
 	wg.Done()
-	log.Debug.Println("Waiting for ACKs: Stopped receiving ACK responses.")
 }
 
 // handleACK receives acknowledgement from client

@@ -124,7 +124,7 @@ loop:
 var r = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 func toDrop(droppingChance int) bool {
-	return r.Intn(100) <= droppingChance
+	return r.Intn(100) < droppingChance
 }
 
 // ACK sends an ACK back to the sender
