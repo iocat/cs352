@@ -5,7 +5,6 @@ if [[ $# -eq 0 ]] ; then
     echo "usage: $0 [sender|receiver|both|clean]"
 fi
 
-
 clean(){
     rm -f ./sender ./receiver
 }
@@ -13,11 +12,17 @@ clean(){
 sender(){
     go build $SENDER
     go install $SENDER
+    if [[ $? -ne 0 ]]; then
+        echo "don't forget to set GOPATH. Check golang.org for more info"
+    fi
 }
 
 receiver(){
     go build $RECEIVER
     go install $RECEIVER
+    if [[ $? -ne 0 ]]; then
+        echo "don't forget to set GOPATH. Check golang.org for more info"
+    fi
 }
 
 
