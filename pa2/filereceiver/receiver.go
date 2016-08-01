@@ -121,8 +121,9 @@ loop:
 	}
 }
 
+var r = rand.New(rand.NewSource(time.Now().UnixNano()))
+
 func toDrop(droppingChance int) bool {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return r.Intn(100) <= droppingChance
 }
 

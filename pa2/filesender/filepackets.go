@@ -15,6 +15,8 @@ import (
 	"github.com/iocat/rutgers-cs352/pa2/protocol/window"
 )
 
+var SetUpTimeout = 300 * time.Millisecond
+
 // FileSender maintains a stateful connection with a set of receivers
 // FileSender interacts with the window to make sure every client receive
 // the packets before sliding the window forward
@@ -157,7 +159,7 @@ type receiverResponse struct {
 	addr *net.UDPAddr
 }
 
-func (fs *FileSender) listenResponse(doneListen <-chan struct{},
+func (fs *FileSender) listenResponse(timeout time.Duration, doneListen <-chan struct{},
 	newResponse chan<- receiverResponse, wg *sync.WaitGroup) {
 	log.Debug.Println("Waiting for ACKs: Start receiving ACK reponses")
 loop:
@@ -170,7 +172,7 @@ loop:
 			var data = make([]byte, header.HeaderSizeInBytes)
 			// Set the read deadline to the unresponsive time
 			fs.listen.SetReadDeadline(
-				time.Now().Add(fs.UnresponsiveTimeout))
+				time.Now().Add(timeout))
 			// Read the packet
 			size, addr, err := fs.listen.ReadFromUDP(data[0:])
 			if err != nil {
@@ -214,7 +216,7 @@ func (fs *FileSender) handleACK(
 		newResponse        = make(chan receiverResponse)
 	)
 	listenResponseWait.Add(1)
-	go fs.listenResponse(doneListenResponse, newResponse, &listenResponseWait)
+	go fs.listenResponse(fs.UnresponsiveTimeout, doneListenResponse, newResponse, &listenResponseWait)
 	// Set every receivers to start tracking timeout
 	for _, receiver := range fs.receivers {
 		go receiver.Timeout(unresponsiveAddr)
@@ -300,7 +302,7 @@ func (fs *FileSender) setup(file *os.File, h header.Header) header.Header {
 	)
 	responseWait.Add(1)
 	// listen to client response
-	go fs.listenResponse(responseDone, newResponse, &responseWait)
+	go fs.listenResponse(SetUpTimeout, responseDone, newResponse, &responseWait)
 
 	// Start sending timeout segment
 	timeoutSegment = fs.newTimeoutSegment(
