@@ -158,7 +158,6 @@ loop:
 				segment.Header())
 			continue
 		} else {
-			log.Info.Printf("received %#v: send an ACK back to %s.", segment.Header(), fr.senderAddr)
 			// Acknowledge this packet on another thread
 			fr.ACK(segment.Segment)
 		}

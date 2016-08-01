@@ -29,5 +29,5 @@ const (
 	// SegmentSize is the size in bytes of the segment
 	SegmentSize = HeaderSize + PayloadSize
 	// WindowSize is the window size of the protocol
-	WindowSize = 500
+	WindowSize = 1000
 )
