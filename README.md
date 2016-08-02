@@ -7,7 +7,7 @@
 
 Please refer to each project folder for more information.
 
-IMPORTANT NOTE: pa1 and pa2 has an excessively use of channels, rather
+IMPORTANT NOTE: pa1 and pa2 have an excessively use of channels, rather
 than a blocking primitive mechanism. No mutex was used in the project,
 which is a bad convention.
 
