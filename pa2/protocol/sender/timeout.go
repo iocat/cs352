@@ -1,6 +1,7 @@
 package sender
 
 import (
+	stdlog "log"
 	"net"
 	"time"
 
@@ -42,18 +43,22 @@ func NewTimeout(conn *net.UDPConn, packet *datagram.Segment,
 func (timeout *timeoutSender) Start(addr *net.UDPAddr) {
 	go func(addr *net.UDPAddr) {
 		var (
+			l          *stdlog.Logger
 			retransmit = false
 			timeoutS   = ""
 		)
 		for _ = range timeout.Ticker.C {
 			if retransmit {
 				timeoutS = "timeout: re"
+				l = log.Warning
+			} else {
+				l = log.Info
 			}
 			if addr == nil {
-				log.Info.Printf("%sbroadcast packet %#v", timeoutS, timeout.Sender)
+				l.Printf("%sbroadcast packet %#v", timeoutS, timeout.Sender)
 				timeout.Broadcast()
 			} else {
-				log.Info.Printf("%stransmit packet %#v", timeoutS, timeout.Sender)
+				l.Printf("%stransmit packet %#v", timeoutS, timeout.Sender)
 				timeout.SendTo(addr)
 			}
 			retransmit = true

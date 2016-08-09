@@ -20,7 +20,7 @@ func reconstructFile(file io.WriteCloser, payloads <-chan []byte,
 loop:
 	for payload := range payloads {
 		if len(payload) == 0 {
-			log.Debug.Printf("reconstruct file %s: EOF.", file.(*os.File).Name())
+			log.Info.Printf("reconstruct file %s: EOF.", file.(*os.File).Name())
 			// The length of the payload is 0
 			break loop
 		}
@@ -29,7 +29,7 @@ loop:
 			err error
 		)
 		if /*length*/ _, err = file.Write(payload); err != nil {
-			log.Warning.Printf("reconstruct file: write to file error: %s", err)
+			log.Warning.Fatalf("reconstruct file: write to file error: %s", err)
 			return
 		}
 		/*go func(size int) {

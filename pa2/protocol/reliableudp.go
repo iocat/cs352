@@ -25,9 +25,9 @@ const (
 	// HeaderSize is the size of the header
 	HeaderSize = header.HeaderSizeInBytes
 	// PayloadSize is the size of the payload regardless of the header size
-	PayloadSize = 1200
+	PayloadSize = 500
 	// SegmentSize is the size in bytes of the segment
 	SegmentSize = HeaderSize + PayloadSize
 	// WindowSize is the window size of the protocol
-	WindowSize = 1000
+	WindowSize = 10
 )

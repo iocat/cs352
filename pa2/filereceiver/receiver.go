@@ -67,11 +67,13 @@ func New(outputDir string, conn *net.UDPConn, droppingChance int, senderPort int
 		log.Warning.Fatalf("cannot create %s: %s", outputDir, err)
 	}
 	return &FileReceiver{
-		socket:          conn,
-		window:          window.New(protocol.WindowSize),
+		socket: conn,
+		// The receiver's window is doubled
+		window:          window.New(2 * protocol.WindowSize),
 		reconstructData: make(chan []byte),
 		reconstructDone: make(chan struct{}),
 		senderPort:      senderPort,
+		droppingChance:  droppingChance,
 		out:             outputDir,
 	}
 }
@@ -120,11 +122,16 @@ loop:
 		}
 	}
 }
-
-var r = rand.New(rand.NewSource(time.Now().UnixNano()))
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
 
 func toDrop(droppingChance int) bool {
-	return r.Intn(100) < droppingChance
+	drop := rand.Intn(100)
+	if drop < droppingChance {
+		return true
+	}
+	return false
 }
 
 // ACK sends an ACK back to the sender
@@ -155,10 +162,10 @@ loop:
 		segment := newReceiverSegment(datagram.NewFromUDPPayload(data))
 		// try to drop the packet
 		if toDrop(fr.droppingChance) {
-			log.Warning.Printf("pseudo packet drop: drop one with header: %#v",
-				segment.Header())
-			continue
+			log.Warning.Printf("pseudo packet drop: drop one with header: %#v", segment.Header())
+			continue loop
 		} else {
+			log.Info.Printf("acknowledge: %#v", segment.Header())
 			// Acknowledge this packet on another thread
 			fr.ACK(segment.Segment)
 		}
@@ -219,6 +226,7 @@ func (fr *FileReceiver) exitableHandleSegment(segment *receiverSegment) bool {
 }
 
 func (fr *FileReceiver) handleSegment(segment *receiverSegment) error {
+	log.Info.Printf("handle packet: %#v", segment)
 	var err error
 	switch {
 	case segment.IsFILE():
