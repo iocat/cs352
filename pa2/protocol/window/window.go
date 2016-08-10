@@ -1,7 +1,9 @@
 package window
 
 import (
-	"github.com/iocat/rutgers-cs352/pa2/log"
+	"errors"
+	"fmt"
+	"sync"
 
 	"github.com/iocat/rutgers-cs352/pa2/protocol/datagram/header"
 )
@@ -17,135 +19,109 @@ type Segment interface {
 
 // Window represents a fixed size auto sliding window that has no duplicated
 // header
-// Window however does not keep track the sequencing of packet, it just stores
-// packet and controls the size of the window
 type Window struct {
-	maxSize int
+	// lock protects segments and count
+	lock     *sync.RWMutex
+	segments []Segment
 
-	// A counter channel that acts like a semaphore
-	// which limits the window size
-	segmentCount chan struct{}
+	// count counts the number of segments in window
+	count int
 
-	// A channel that listens to the next segment to be added
-	segmentAdder   chan Segment
-	segmentRemover chan header.Header
-
-	// A store of segments using the segment header
-	segments map[header.Header]Segment
-
-	// A get pairs of channel to implement synchronous read on map
-	getRequest  chan header.Header
-	getResponse chan Segment
-
-	emptyCheck chan chan bool
-
-	head header.Header
-
-	done chan struct{}
+	// loadable is a signal that notifies when the window is loadable
+	loadable chan struct{}
 }
 
-// Add adds a new segment to the window
-// This method blocks if the window is full, if there are empty spaces,
-// This method returns right away and add the segment to the window.
-// If header duplication occurs the method drops the segment
-func (window *Window) Add(segment Segment) {
-	// Lock if the map is full
-	window.segmentCount <- struct{}{}
-	// Send the segment to the adder
-	window.segmentAdder <- segment
+// Head gets the segment at first index
+func (w *Window) Head() Segment {
+	w.lock.RLock()
+	defer w.lock.RUnlock()
+	return w.segments[0]
 }
 
-// TryAdd is a mon-blocking version of Add: this method tries to add a new
-// segment if there are available space. Otherwise, it returns right away and
-// the segment is discarded
-func (window *Window) TryAdd(segment Segment) {
-	select {
-	case window.segmentCount <- struct{}{}:
-		window.segmentAdder <- segment
-	default:
+// Empty checks whether the window is loadable or not
+func (w *Window) Empty() bool {
+	return len(w.loadable) == 0
+}
 
+// GoString returns a string representation of the window
+func (w Window) GoString() string {
+	var res string
+	res += "Window["
+	for i := 0; i < w.count; i++ {
+		res += fmt.Sprintf(" %#v ", w.segments[i].Header())
 	}
+	res += "]"
+	return res
 }
 
-func (window *Window) add(segment Segment) {
-	if duplicated, ok := window.segments[segment.Header()]; ok {
-		log.Warning.Fatalf("duplicated header: the collided segment is %#v", duplicated)
+// Load loads a bunch of packets into the window by mapping from the 0 index
+func (w *Window) Load(segments []Segment) {
+	w.loadable <- struct{}{}
+	if len(segments) > len(w.segments) {
+		panic(errors.New("load: parameter has wrong size"))
 	}
-	window.segments[segment.Header()] = segment
-	// Start a new thread that waits for a removal signal
-	go func(window *Window, h header.Header) {
-		select {
-		case <-window.done:
-			break
-		case <-segment.Removable():
-			window.segmentRemover <- h
+	w.lock.Lock()
+	defer w.lock.Unlock()
+	w.count = copy(w.segments, segments)
+	var justRemove = make(chan struct{})
+	go func(justRemove <-chan struct{}, maxRemove int) {
+		var removeCount = 0
+		for _ = range justRemove {
+			removeCount++
+			if removeCount == maxRemove {
+				// Allow loading of the next set
+				<-w.loadable
+				break
+			}
 		}
-	}(window, segment.Header())
-}
-
-// Get gets the segment using the header
-// This method holds and waits until the segment is returned
-// Get might returns nil if no segment corresponds to the provided header is in
-// the window
-func (window *Window) Get(h header.Header) Segment {
-	if h.IsACK() || h.IsNACK() || h.IsEOF() || h.IsEXIT() || h.IsFILE() {
-		log.Warning.Panic("the header is not either RED or BLUE")
+	}(justRemove, w.count)
+	for _, segment := range segments {
+		go func(justRemove chan<- struct{}, segment Segment) {
+			select {
+			case <-segment.Removable():
+				// Notify removable
+				justRemove <- struct{}{}
+			}
+		}(justRemove, segment)
 	}
-
-	window.getRequest <- h
-	return <-window.getResponse
 }
 
-// IsEmpty checks whether the window is empty at the time of the check
-// This call will block until the result is retrieved
-func (window *Window) IsEmpty() bool {
-	checkChan := make(chan bool)
-	window.emptyCheck <- checkChan
-	return <-checkChan
+func distance(a header.Header, b header.Header) int {
+	if (a.IsRED() && b.IsRED()) || (a.IsBLUE() && b.IsBLUE()) {
+		return int(b.Sequence - a.Sequence)
+	}
+	return int((header.MaxSequence - a.Sequence) + b.Sequence + 1)
 }
 
-// get gets the segments
-func (window *Window) get(h header.Header) {
-	window.getResponse <- window.segments[h]
-}
-
-// remove removes the segment using the header
-func (window *Window) remove(h header.Header) {
-	delete(window.segments, h)
-	// Release a segment that allows the window to add more segment
-	<-window.segmentCount
+// Get gets a segment corresponding to the header
+func (w *Window) Get(s header.Header) Segment {
+	w.lock.RLock()
+	defer w.lock.RUnlock()
+	if w.count == 0 {
+		return nil
+	}
+	var head = w.segments[0]
+	// Before the sequence
+	if comp := s.Compare(head.Header()); comp < 0 {
+		return nil
+	} else if comp == 0 {
+		return head
+	} else {
+		d := distance(head.Header(), s)
+		if d >= w.count {
+			return nil
+		}
+		return w.segments[d]
+	}
 }
 
 // New creates a new window with max size
 // + size is the size of the window
 func New(size int) *Window {
-	window := Window{
-		maxSize:        size,
-		segmentCount:   make(chan struct{}, size),
-		segmentAdder:   make(chan Segment),
-		segmentRemover: make(chan header.Header),
-		getRequest:     make(chan header.Header),
-		getResponse:    make(chan Segment),
-		segments:       make(map[header.Header]Segment),
-		emptyCheck:     make(chan chan bool),
-		done:           make(chan struct{}),
+	return &Window{
+		lock:     &sync.RWMutex{},
+		segments: make([]Segment, size),
+		loadable: make(chan struct{}, 1),
+		count:    0,
 	}
-	go func(window *Window) {
-	loop:
-		for {
-			select {
-			case checkChan := <-window.emptyCheck:
-				checkChan <- (len(window.segments) == 0)
-			case h := <-window.segmentRemover:
-				window.remove(h)
-			case segment := <-window.segmentAdder:
-				window.add(segment)
-			case h := <-window.getRequest:
-				window.get(h)
-			case <-window.done:
-				break loop
-			}
-		}
-	}(&window)
-	return &window
 }

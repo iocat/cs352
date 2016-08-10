@@ -20,14 +20,16 @@ const (
 	SetupTimeout = 1 * time.Second
 	// UnresponsiveTimeout is the timeout before the sender gets rid of
 	// the client because the client is not responsive to the sender packet
-	UnresponsiveTimeout = 5 * time.Second
+	// UnresponsiveTimeout is also the timeout for the receivers in case the
+	// sender is not responding for a while
+	UnresponsiveTimeout = 8 * time.Second
 
 	// HeaderSize is the size of the header
 	HeaderSize = header.HeaderSizeInBytes
 	// PayloadSize is the size of the payload regardless of the header size
-	PayloadSize = 500
+	PayloadSize = 1200
 	// SegmentSize is the size in bytes of the segment
 	SegmentSize = HeaderSize + PayloadSize
 	// WindowSize is the window size of the protocol
-	WindowSize = 10
+	WindowSize = 100
 )

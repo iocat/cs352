@@ -11,12 +11,16 @@ import (
 	"github.com/iocat/rutgers-cs352/pa2/protocol"
 )
 
+var window = flag.Int("wind", protocol.WindowSize, "The size of the receiver window")
+
 var broadcastAddr = flag.String("baddr", "255.255.255.255",
 	"The broadcast address this sender is broadcasting to")
 
 var listeningPort = flag.Int("port", 9000,
 	fmt.Sprintf("The port number this sender receives ACKs, must not be the broadcast port% d",
 		protocol.BroadcastPort))
+
+var drop = flag.Int("drop", 0, "The probability to drop one receiving packet")
 
 func main() {
 	// Create a listening socket
@@ -50,7 +54,8 @@ func main() {
 	}
 
 	// Start the sender process
-	fs := filesender.New(broadcastSocket, listenSocket, files)
+	fs := filesender.NewWithWindowSize(*window, broadcastSocket, listenSocket, files)
+	fs.DroppingChance = *drop
 	fs.Run()
 }
 

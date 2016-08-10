@@ -64,7 +64,7 @@ func (segment Segment) GoString() string {
 		}
 		return y
 	}
-	return fmt.Sprintf("%s, payload size: %d byte(s)",
+	return fmt.Sprintf("%s, payload: %d byte(s)",
 		segment.Header.GoString(),
 		len(segment.Payload))
 }

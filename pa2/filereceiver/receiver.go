@@ -13,21 +13,18 @@ import (
 	"github.com/iocat/rutgers-cs352/pa2/protocol/datagram"
 	"github.com/iocat/rutgers-cs352/pa2/protocol/datagram/header"
 	"github.com/iocat/rutgers-cs352/pa2/protocol/sender"
-	"github.com/iocat/rutgers-cs352/pa2/protocol/window"
 )
 
 // FileReceiver represents a receiver that receives file packets from
 // UDP Connection
 type FileReceiver struct {
-	senderAddr *net.UDPAddr
+	senderTimeout time.Duration
+	senderAddr    *net.UDPAddr
 
 	droppingChance int
 
 	// current header is the current header of the latest packet
 	currentHeader header.Header
-
-	// The window this FileReceiver uses to store data
-	window *window.Window
 
 	// The socket that this FileReceiver uses to send and replies to
 	// the broadcaster
@@ -67,14 +64,13 @@ func New(outputDir string, conn *net.UDPConn, droppingChance int, senderPort int
 		log.Warning.Fatalf("cannot create %s: %s", outputDir, err)
 	}
 	return &FileReceiver{
-		socket: conn,
-		// The receiver's window is doubled
-		window:          window.New(2 * protocol.WindowSize),
+		socket:          conn,
 		reconstructData: make(chan []byte),
 		reconstructDone: make(chan struct{}),
 		senderPort:      senderPort,
 		droppingChance:  droppingChance,
 		out:             outputDir,
+		senderTimeout:   protocol.UnresponsiveTimeout,
 	}
 }
 
@@ -85,42 +81,41 @@ func (fr *FileReceiver) switchSenderAddrPort() {
 // receiveData receives data buffer and send it to the newData channel
 // receiveData knows nothing about the data packet it receives. It makes sure
 // the received packets is from the acknowledged sender
-func (fr *FileReceiver) receiveData(
-	newData chan<- []byte,
-	stopSignal <-chan struct{}) {
+func (fr *FileReceiver) receiveData(newData chan<- []byte, hasTimeout chan<- struct{}) {
 	var (
 		data []byte
 	)
 loop:
 	for {
-		select {
-		case <-stopSignal:
-			break loop
-		default:
-			data = make([]byte, protocol.SegmentSize)
-			length, addr, err := fr.socket.ReadFromUDP(data)
-			if err != nil {
-				log.Warning.Printf("receive data error: %s", err)
+		data = make([]byte, protocol.SegmentSize)
+		fr.socket.SetReadDeadline(time.Now().Add(fr.senderTimeout))
+		length, addr, err := fr.socket.ReadFromUDP(data)
+		if err != nil {
+			if err, ok := err.(net.Error); ok && err.Timeout() {
+				hasTimeout <- struct{}{}
+				break loop
 			}
-			if fr.senderAddr == nil {
-				log.Info.Printf("new sender dectected: set this %s as an official sender", addr.String())
-				fr.senderAddr = addr
-				fr.switchSenderAddrPort()
-			}
-			// Check sender address
-			if addr.IP.String() != fr.senderAddr.IP.String() {
-				log.Warning.Printf("receive broadcast packet from unknown sender host, got %s, expected %s",
-					addr.String(), fr.senderAddr.String())
-			}
-			// check the packet length
-			if length < protocol.HeaderSize {
-				log.Debug.Printf("packet size is not correct: expected >%d bytes, received %d bytes",
-					protocol.HeaderSize, length)
-			}
-			// pass it up
-			newData <- data[:length]
+			log.Warning.Printf("receive data error: %s", err)
 		}
+		if fr.senderAddr == nil {
+			log.Info.Printf("new sender dectected: set this %s as an official sender", addr.String())
+			fr.senderAddr = addr
+			fr.switchSenderAddrPort()
+		}
+		// Check sender address
+		if addr.IP.String() != fr.senderAddr.IP.String() {
+			log.Warning.Printf("receive broadcast packet from unknown sender host, got %s, expected %s",
+				addr.String(), fr.senderAddr.String())
+		}
+		// check the packet length
+		if length < protocol.HeaderSize {
+			log.Debug.Printf("packet size is not correct: expected >%d bytes, received %d bytes",
+				protocol.HeaderSize, length)
+		}
+		// pass it up
+		newData <- data[:length]
 	}
+
 }
 func init() {
 	rand.Seed(time.Now().UnixNano())
@@ -135,80 +130,98 @@ func toDrop(droppingChance int) bool {
 }
 
 // ACK sends an ACK back to the sender
-func (fr *FileReceiver) ACK(segment *datagram.Segment) {
+func (fr *FileReceiver) acknowledge(segment *datagram.Segment) {
 	// Accepted: Send an ACK back
 	sender.New(fr.socket,
 		datagram.New(header.ACK|segment.Header.Flag,
-			segment.Header.Sequence,
-			nil)).
-		SendTo(fr.senderAddr)
+			segment.Header.Sequence, nil)).SendTo(fr.senderAddr)
+}
+
+// Cache is the cache memory for the received packet
+type Cache map[header.Header]*receiverSegment
+
+// Cache cache the packet
+func (c Cache) Cache(h header.Header, s *receiverSegment) {
+	c[h.Pure()] = s
+}
+
+// Get gets the packet from the cache
+func (c Cache) Get(h header.Header) (*receiverSegment, bool) {
+	if s, ok := c[h.Pure()]; ok {
+		return s, ok
+	}
+	return nil, false
+}
+
+// Delete deletes one packet from the cache
+func (c Cache) Delete(h header.Header) {
+	delete(c, h.Pure())
 }
 
 // ReceiveFiles starts receiving files
 // outputDir is the directory to write the downloaded files to
 func (fr *FileReceiver) ReceiveFiles() {
 	var (
-		newData       = make(chan []byte)
-		stopReceiving = make(chan struct{})
+		newData    = make(chan []byte)
+		hasTimeout = make(chan struct{})
+		cache      = make(Cache)
 
 		expectedHeader = header.Header{
 			Flag:     header.RED,
 			Sequence: 0,
 		}
 	)
-	go fr.receiveData(newData, stopReceiving)
+	go fr.receiveData(newData, hasTimeout)
 loop:
-	for data := range newData {
-		segment := newReceiverSegment(datagram.NewFromUDPPayload(data))
-		// try to drop the packet
-		if toDrop(fr.droppingChance) {
-			log.Warning.Printf("pseudo packet drop: drop one with header: %#v", segment.Header())
-			continue loop
-		} else {
-			log.Info.Printf("acknowledge: %#v", segment.Header())
-			// Acknowledge this packet on another thread
-			fr.ACK(segment.Segment)
-		}
+	for {
+		select {
+		case <-hasTimeout:
+			log.Warning.Printf("Sender is unresponsive or sender does not exist. Exit.")
+			break loop
+		case data := <-newData:
+			segment := newReceiverSegment(datagram.NewFromUDPPayload(data))
+			// try to drop the packet
+			if toDrop(fr.droppingChance) {
+				log.Warning.Printf("pseudo packet drop: drop one with header: %#v", segment.Header())
+				continue loop
+			} else {
+				// Acknowledge this packet on another thread
+				fr.acknowledge(segment.Segment)
+			}
 
-		if compRes := segment.Header().Compare(expectedHeader); compRes == 0 {
-			// Handle an inorder segment
-			if fr.exitableHandleSegment(segment) {
-				break loop
-			}
-			expectedHeader = segment.Header().Next()
-			// Keep getting the next expected window from the cached window
-		inner:
-			for {
-				if subsequent := fr.window.Get(expectedHeader.PureHeader()); subsequent != nil {
-					// Handle this segment
-					if fr.exitableHandleSegment(subsequent.(*receiverSegment)) {
-						break loop
-					}
-					expectedHeader = subsequent.Header().Next()
-					// Remove from cache
-					if subsequent, ok := subsequent.(*receiverSegment); ok {
-						subsequent.canRemove()
-					} else {
-						log.Debug.Panic("wrong format for segment: expected a filerecever.Segment")
-					}
-				} else {
-					// Does not have the next one
-					break inner
+			if compRes := segment.Header().Compare(expectedHeader); compRes == 0 {
+				// Handle an inorder segment
+				if fr.exitableHandleSegment(segment) {
+					break loop
 				}
-			}
-		} else {
-			// This packet is later in the sequence
-			if compRes > 0 {
-				// Check if this segment was cached or not
-				if fr.window.Get(segment.Header()) == nil {
-					// Go ahead and cache this packet if possible (non-blocking cache)
-					fr.window.TryAdd(segment)
+				expectedHeader = segment.Header().Next()
+				// Keep getting the next expected window from the cache
+			inner:
+				for {
+					if subsequent, ok := cache.Get(expectedHeader); ok {
+						// Handle this segment
+						if fr.exitableHandleSegment(subsequent) {
+							break loop
+						}
+						// Remove from cache
+						cache.Delete(expectedHeader)
+						expectedHeader = subsequent.Header().Next()
+					} else {
+						// Does not have the next one
+						break inner
+					}
 				}
 			} else {
-				// This packet is received already
-				// compRes < 0 : packet received
+				// This packet is later in the sequence
+				if compRes > 0 {
+					// Check if this segment was cached or not
+					if _, ok := cache.Get(segment.Header()); !ok {
+						// Go ahead and cache this packet if possible (non-blocking cache)
+						cache.Cache(segment.Header(), segment)
+					}
+				}
 			}
-
+			// Skipped packet that is previous in the sequence ( already received)
 		}
 	}
 }
@@ -226,7 +239,7 @@ func (fr *FileReceiver) exitableHandleSegment(segment *receiverSegment) bool {
 }
 
 func (fr *FileReceiver) handleSegment(segment *receiverSegment) error {
-	log.Info.Printf("handle packet: %#v", segment)
+	log.Info.Printf("handle packet: %#v\r", segment)
 	var err error
 	switch {
 	case segment.IsFILE():

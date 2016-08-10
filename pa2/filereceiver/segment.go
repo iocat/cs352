@@ -7,23 +7,13 @@ import (
 
 type receiverSegment struct {
 	*datagram.Segment
-	markedRemovable chan struct{}
 }
 
 func newReceiverSegment(segment *datagram.Segment) *receiverSegment {
 	return &receiverSegment{
-		markedRemovable: make(chan struct{}),
-		Segment:         segment,
+		Segment: segment,
 	}
 }
 func (rs *receiverSegment) Header() header.Header {
-	return rs.Segment.Header.PureHeader()
-}
-
-func (rs *receiverSegment) canRemove() {
-	close(rs.markedRemovable)
-}
-
-func (rs *receiverSegment) Removable() <-chan struct{} {
-	return rs.markedRemovable
+	return rs.Segment.Header
 }

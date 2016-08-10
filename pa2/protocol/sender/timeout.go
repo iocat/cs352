@@ -55,10 +55,10 @@ func (timeout *timeoutSender) Start(addr *net.UDPAddr) {
 				l = log.Info
 			}
 			if addr == nil {
-				l.Printf("%sbroadcast packet %#v", timeoutS, timeout.Sender)
+				l.Printf("%sbroadcast %#v", timeoutS, timeout.Sender)
 				timeout.Broadcast()
 			} else {
-				l.Printf("%stransmit packet %#v", timeoutS, timeout.Sender)
+				l.Printf("%stransmit %#v", timeoutS, timeout.Sender)
 				timeout.SendTo(addr)
 			}
 			retransmit = true

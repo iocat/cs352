@@ -1,7 +1,8 @@
 package filesender
 
 import (
-	"io"
+	"fmt"
+	"math/rand"
 	"net"
 	"os"
 	"sync"
@@ -21,12 +22,11 @@ var SetUpTimeout = 300 * time.Millisecond
 // FileSender interacts with the window to make sure every client receive
 // the packets before sliding the window forward
 type FileSender struct {
+	Files []*os.File
+
 	// A set of receivers that accept the file sending request from the server
 	// can only be changed for each file break.
 	receivers map[Addr]*Receiver
-
-	Files []*os.File
-
 	// A timeout before sending the
 	// actual file packets. This timeout makes sure that no more client
 	// is added after the file packets are sent out
@@ -41,36 +41,90 @@ type FileSender struct {
 	// The timeout for the segments which will be resent automatically
 	SegmentTimeout time.Duration
 
-	// The window used to store the TimeoutSegment
-	window *window.Window
+	// The size of the window
+	WindowSize int
+
+	// The dropping chance of the received packet
+	DroppingChance int
 
 	// The broadcasting socket
 	broadcast *net.UDPConn
-
+	// The listening socket
 	listen *net.UDPConn
 
+	newResponse chan receiverResponse
+
 	done chan struct{}
+}
+
+// NewWithWindowSize creates a new file sender with a fixed size capacity provided
+func NewWithWindowSize(size int, broadcast *net.UDPConn, listen *net.UDPConn, files []*os.File) *FileSender {
+	fileSender := &FileSender{
+		SegmentTimeout:      protocol.SegmentTimeout,
+		SetupTimeout:        protocol.SetupTimeout,
+		UnresponsiveTimeout: protocol.UnresponsiveTimeout,
+		WindowSize:          size,
+
+		newResponse: make(chan receiverResponse),
+		Files:       files,
+		broadcast:   broadcast,
+		listen:      listen,
+		done:        make(chan struct{}),
+	}
+	return fileSender
 }
 
 // New creates a new file sender
 // Caller must provides conn, which is the broadcasting socket
 func New(broadcast *net.UDPConn, listen *net.UDPConn, files []*os.File) *FileSender {
-	fileSender := &FileSender{
-		SegmentTimeout:      protocol.SegmentTimeout,
-		SetupTimeout:        protocol.SetupTimeout,
-		UnresponsiveTimeout: protocol.UnresponsiveTimeout,
+	return NewWithWindowSize(protocol.WindowSize, broadcast, listen, files)
+}
 
-		window:    window.New(protocol.WindowSize),
-		Files:     files,
-		broadcast: broadcast,
-		listen:    listen,
-		done:      make(chan struct{}),
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
+func toDrop(droppingChance int) bool {
+	drop := rand.Intn(100)
+	if drop < droppingChance {
+		return true
 	}
-	return fileSender
+	return false
+}
+
+func (fs *FileSender) listenResponse() {
+loop:
+	for {
+		var data = make([]byte, header.HeaderSizeInBytes)
+		// Read the packet
+		size, addr, err := fs.listen.ReadFromUDP(data[0:])
+		if err != nil {
+			log.Warning.Println("Waiting for ACKs: error: ", err)
+			break loop
+		}
+
+		if toDrop(fs.DroppingChance) {
+			log.Warning.Printf("pseudo packet drop: %#v", datagram.NewFromUDPPayload(data))
+			continue loop
+		}
+
+		// Check the size of the data
+		if size < header.HeaderSizeInBytes {
+			log.Debug.Fatalln("Waiting for ACKs: the received packet size is not valid: expected", header.HeaderSizeInBytes)
+			continue
+		}
+		fs.newResponse <- receiverResponse{
+			data: data[:size],
+			addr: addr,
+		}
+	}
 }
 
 // Run is a blocking call that starts the sending server
 func (fs *FileSender) Run() {
+	if fs.DroppingChance > 100 || fs.DroppingChance < 0 {
+		log.Warning.Fatalf("the dropping chance should be in the range of [0,100]")
+	}
 	defer fs.broadcast.Close()
 	defer fs.listen.Close()
 	var (
@@ -79,16 +133,19 @@ func (fs *FileSender) Run() {
 			Sequence: 0,
 		}
 		toExit = false
+		window = window.New(fs.WindowSize)
 	)
+	go fs.listenResponse()
 	for i, file := range fs.Files {
+		h = fs.setup(file, h)
 		if i == len(fs.Files)-1 {
 			toExit = true
 		}
-		h = fs.setup(file, h)
-		h = fs.send(file, h, toExit)
+		h = fs.send(window, file, h, toExit)
 		// Close the sent file
 		file.Close()
 	}
+
 }
 
 func decorate(h header.Header, flags ...header.Flag) header.Header {
@@ -99,186 +156,39 @@ func decorate(h header.Header, flags ...header.Flag) header.Header {
 	return result
 }
 
-func (fs *FileSender) exit(h header.Header) header.Header {
-	// Broadcast an EXIT Segment
-	fs.broadcastSegmentWithTimeout(decorate(h, header.EXIT), nil)
-	return h.Next()
-}
-
-func (fs *FileSender) broadcastSegmentWithTimeout(h header.Header, payload []byte) {
-	// Create a new auto sent segment
-	timeoutSegment := fs.newTimeoutSegment(h, payload)
-	// start broadcasting this segment
-	timeoutSegment.Start(nil)
-	// Add the segment to the window
-	fs.window.Add(timeoutSegment)
-}
-
-// send starts sending the file in terms of packet
-// This method makes sure all receivers received the file and maintains a
-// sending window
-func (fs *FileSender) send(file *os.File, first header.Header, toExit bool) header.Header {
+func (fs *FileSender) loadFileToWindow(w *window.Window, file *os.File, start header.Header) header.Header {
 	var (
-		// the current header
-		h              = first
-		doneReceiveACK = make(chan struct{})
-		waitReceiveACK sync.WaitGroup
-		// closure to get the next payload... omg, this is magic @@
-		next = func(file *os.File) []byte {
-			return nextPayload(file, protocol.PayloadSize)
-		}
+		h        = start
+		producer = newFileProducer(file, protocol.PayloadSize)
+		segments = make([]window.Segment, 0, fs.WindowSize)
 	)
-	waitReceiveACK.Add(1)
-	// Start a new thread that listens to acknowlegement
-	go fs.handleACK(doneReceiveACK, &waitReceiveACK)
-	log.Info.Printf("BROADCAST: Start broadcasting file: file's name \"%s\"", file.Name())
-	for payload := next(file); len(payload) != 0; payload = next(file) {
-		fs.broadcastSegmentWithTimeout(h, payload)
-		// Get the next header in the sequence
+	for {
+		var toBreak bool
+		next, err := producer.Produce()
+		if err != nil {
+			log.Warning.Fatalf("produce next payload: %s", err)
+		}
+		if len(next) == 0 {
+			h.EOF()
+			toBreak = true
+		}
+		// Create a new auto sending segment
+		ts := fs.newTimeoutSegment(h, next)
+		segments = append(segments, ts)
+		if len(segments) == fs.WindowSize || h.IsEOF() {
+			w.Load(segments)
+			for _, s := range segments {
+				s.(*timeoutSegment).Start(nil)
+			}
+			// Reset the segment list
+			segments = segments[0:0]
+		}
 		h = h.Next()
+		if toBreak {
+			break
+		}
 	}
-	// Set the header to EOF
-	_ = h.EOF()
-	fs.broadcastSegmentWithTimeout(h, nil)
-	h = h.Next()
-	// Send an exit packet if this is the last file
-	if toExit {
-		_ = h.EXIT()
-		fs.broadcastSegmentWithTimeout(h, nil)
-		h = h.Next()
-	}
-	// Signaling the receiving ACK thread to stop then wait until every ACKs received
-	close(doneReceiveACK)
-	waitReceiveACK.Wait()
-	// Return the next header in sequence
 	return h
-}
-
-type receiverResponse struct {
-	data []byte
-	addr *net.UDPAddr
-}
-
-func (fs *FileSender) listenResponse(timeout time.Duration, doneListen <-chan struct{},
-	newResponse chan<- receiverResponse, wg *sync.WaitGroup) {
-loop:
-	for {
-		select {
-		case <-doneListen:
-			break loop
-		default:
-			// RECEIVE ACKed HEADER segment FROM RECEIVERS
-			var data = make([]byte, header.HeaderSizeInBytes)
-			// Set the read deadline to the unresponsive time
-			fs.listen.SetReadDeadline(
-				time.Now().Add(timeout))
-			// Read the packet
-			size, addr, err := fs.listen.ReadFromUDP(data[0:])
-			if err != nil {
-				if err, ok := err.(net.Error); ok && err.Timeout() {
-					break
-				}
-				log.Warning.Println("Waiting for ACKs: error: ", err)
-				break
-			}
-			// Check the size of the data
-			if size < header.HeaderSizeInBytes {
-				log.Debug.Fatalln("Waiting for ACKs: the received packet size is not valid: expected",
-					header.HeaderSizeInBytes)
-				continue
-			}
-			newResponse <- receiverResponse{
-				data: data[:size],
-				addr: addr,
-			}
-		}
-	}
-	wg.Done()
-}
-
-// handleACK receives acknowledgement from client
-// and marks the segment as removed
-// doneReceivingSignal is a signal that asks the method to stop receiving ACK
-// It does not mean receiveACK stop right away. receiveACK only stop when window
-// is empty ( no more segment that needs an ACK )
-func (fs *FileSender) handleACK(
-	doneReceivingSignal <-chan struct{},
-	wg *sync.WaitGroup) {
-
-	var (
-		unresponsiveAddr = make(chan Addr)
-
-		listenResponseWait sync.WaitGroup
-		doneListenResponse = make(chan struct{})
-		newResponse        = make(chan receiverResponse)
-	)
-	listenResponseWait.Add(1)
-	go fs.listenResponse(fs.UnresponsiveTimeout, doneListenResponse, newResponse, &listenResponseWait)
-	// Set every receivers to start tracking timeout
-	for _, receiver := range fs.receivers {
-		go receiver.Timeout(unresponsiveAddr)
-	}
-loop:
-	for {
-		select {
-		case <-doneReceivingSignal:
-			// Check empty window first before exit
-			if fs.window.IsEmpty() {
-				// Stop receiving response
-				close(doneListenResponse)
-				// Wait till the listenResponse process closes
-				listenResponseWait.Wait()
-				break loop
-			}
-		case response := <-newResponse:
-			if receiver, ok := fs.receivers[getAddr(response.addr)]; ok {
-				// Reset the timer
-				receiver.Reset()
-				segment := fs.window.Get(
-					datagram.NewFromUDPPayload(response.data).Header.PureHeader())
-				if segment == nil {
-					continue
-				}
-				ts := segment.(*timeoutSegment)
-
-				// Marked as ACKed
-				ts.ACK(getAddr(response.addr))
-				// Check if everyone acked, marks this segment as removable
-				if ts.HadAllACKed(fs.receivers) {
-					ts.Stop()
-				}
-			} else {
-				log.Info.Printf("Handle ACK: Received packet from an unknown receiver @%s", response.addr.String())
-			}
-		case addr := <-unresponsiveAddr:
-			log.Warning.Printf("client %s is unresponsive. Removed client.", addr)
-			// Get rid of the receiver
-			delete(fs.receivers, addr)
-			if len(fs.receivers) == 0 {
-				log.Warning.Fatal("no receivers left. Exit.")
-			}
-		}
-	}
-	wg.Done()
-}
-
-// nextPayload gets the next payload, the payload contains
-// an exact number of byte that will be sent
-// bufferSize is the maximum size of the buffer
-// file is the file to be read
-func nextPayload(file *os.File, bufferSize int) []byte {
-	var (
-		payload    = make([]byte, bufferSize)
-		readLength int
-		err        error
-	)
-	if readLength, err = file.Read(payload); err != nil {
-		if err == io.EOF {
-			return nil
-		}
-		log.Warning.Println("Getting next payload: error: reading file: ", err)
-	}
-	return payload[:readLength]
 }
 
 // setup sets up the broadcast address, this method continuously sends out the
@@ -290,39 +200,25 @@ func (fs *FileSender) setup(file *os.File, h header.Header) header.Header {
 	fs.receivers = make(map[Addr]*Receiver)
 
 	log.Info.Println("SETUP: Sending an initative (FILE) packet for file name:", file.Name())
-	var (
-		timeoutSegment *timeoutSegment
+	// Start broadcasting a FILE segment
+	filePacket := fs.newTimeoutSegment(decorate(h, header.FILE), []byte(file.Name()))
+	filePacket.Start(nil)
 
-		newResponse  = make(chan receiverResponse)
-		responseDone = make(chan struct{})
-		responseWait sync.WaitGroup
-	)
-	responseWait.Add(1)
-	// listen to client response
-	go fs.listenResponse(SetUpTimeout, responseDone, newResponse, &responseWait)
-
-	// Start sending timeout segment
-	timeoutSegment = fs.newTimeoutSegment(
-		header.Header{
-			Flag:     header.FILE | h.Flag,
-			Sequence: h.Sequence,
-		}, []byte(file.Name()))
-	// Start broadcasting the segment periodically
-	timeoutSegment.Start(nil)
-	// Create a timer
+	// Create setup timer
 	timer := time.NewTimer(fs.SetupTimeout).C
 loop:
 	for {
 		select {
-		case response := <-newResponse:
+		case response := <-fs.newResponse:
+			// Check if the address existed
 			if _, ok := fs.receivers[getAddr(response.addr)]; ok {
 				continue
-			} else {
+			} else if s := datagram.NewFromUDPPayload(response.data); s.IsFILE() && s.IsACK() {
 				go log.Info.Println("SETUP: New client accepted: address @", response.addr.String())
 				// Add the receiver to the set
-				fs.receivers[getAddr(response.addr)] =
-					NewReceiver(getAddr(response.addr), fs.UnresponsiveTimeout)
+				fs.receivers[getAddr(response.addr)] = NewReceiver(getAddr(response.addr), fs.UnresponsiveTimeout)
 			}
+
 		case <-timer:
 			// No receiver: keep setting up
 			if len(fs.receivers) == 0 {
@@ -337,15 +233,94 @@ loop:
 					}
 				}()
 				// Stop broadcasting the filename
-				timeoutSegment.Stop()
-				// Close then wait till the response receiver is done
-				close(responseDone)
-				responseWait.Wait()
+				filePacket.Stop()
 				break loop
 			}
 		}
 	}
 	return h.Next()
+}
+
+// send starts sending the file in terms of packet
+// This method makes sure all receivers received the file and maintains a
+// sending window
+func (fs *FileSender) send(w *window.Window, file *os.File, first header.Header, toExit bool) header.Header {
+	var (
+		doneReceiveACK = make(chan struct{})
+		waitReceiveACK = sync.WaitGroup{}
+	)
+	// Start a new thread that listens to acknowlegement
+	waitReceiveACK.Add(1)
+	go fs.handleACK(w, doneReceiveACK, &waitReceiveACK)
+	// Iteractively load file to window
+	log.Info.Printf("BROADCAST: Start broadcasting file: file's name \"%s\"", file.Name())
+	h := fs.loadFileToWindow(w, file, first)
+	// Broadcast exit packet
+	if toExit {
+		exit := fs.newTimeoutSegment(decorate(h, header.EXIT), nil)
+		w.Load([]window.Segment{exit})
+		exit.Start(nil)
+	}
+	// Signaling the receiving ACK thread to stop then wait until every ACKs have been received
+	close(doneReceiveACK)
+	waitReceiveACK.Wait()
+	return h
+}
+
+type receiverResponse struct {
+	data []byte
+	addr *net.UDPAddr
+}
+
+// handleACK receives acknowledgement from client and marks the segment as removed
+// doneReceivingSignal is a signal that asks the method to stop receiving ACK
+// It does not mean receiveACK stop right away. receiveACK only stop when window
+// is empty ( no more segment that needs an ACK )
+func (fs *FileSender) handleACK(w *window.Window, doneReceivingSignal <-chan struct{}, wg *sync.WaitGroup) {
+	var (
+		unresponsiveAddr = make(chan Addr)
+	)
+	// Set every receivers to start tracking timeout
+	for _, receiver := range fs.receivers {
+		go receiver.Timeout(unresponsiveAddr)
+	}
+loop:
+	for {
+		select {
+		case <-doneReceivingSignal:
+			// Check empty window first before exit
+			if w.Empty() {
+				break loop
+			}
+		case response := <-fs.newResponse:
+			if receiver, ok := fs.receivers[getAddr(response.addr)]; ok {
+				// Reset the timer
+				receiver.Reset()
+				segment := w.Get(datagram.NewFromUDPPayload(response.data).Header.Pure())
+				if segment == nil {
+					fmt.Printf("skip ack: %#v\n", datagram.NewFromUDPPayload(response.data).Header.Pure())
+					continue
+				}
+				ts := segment.(*timeoutSegment)
+				// Marked as ACKed
+				ts.ACK(getAddr(response.addr))
+				// Check if everyone acked, marks this segment as removable
+				if ts.HadAllACKed(fs.receivers) {
+					ts.Stop()
+				}
+			} else {
+				log.Info.Printf("Handle ACK: Received packet from an unknown receiver @%s", response.addr.String())
+			}
+		case addr := <-unresponsiveAddr:
+			log.Warning.Printf("client %s is unresponsive. Removed client.", addr)
+			// Get rid of the receiver
+			delete(fs.receivers, addr)
+			if len(fs.receivers) == 0 {
+				log.Warning.Fatalf("no receivers left. Exit.")
+			}
+		}
+	}
+	wg.Done()
 }
 
 // netTimeoutSegment creates an timeout segment corresponding to this FileSender

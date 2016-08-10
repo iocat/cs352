@@ -40,7 +40,7 @@ func (tSegment *timeoutSegment) HadAllACKed(addrSet map[Addr]*Receiver) bool {
 
 // Header gets the header of this TimeoutSegment
 func (tSegment *timeoutSegment) Header() header.Header {
-	return tSegment.segment.Header.PureHeader()
+	return tSegment.segment.Header.Pure()
 }
 
 // Removable implements the window.Segment interface

@@ -9,25 +9,33 @@ import (
 const (
 	// HeaderSizeInBytes is the size of the header = sizeof(Header)
 	HeaderSizeInBytes = 5
+	// MaxSequence is the maximum sequence number
+	MaxSequence = math.MaxUint32
 )
 
 // GoString returns the string representation of the object
 func (header Header) GoString() string {
 	var flag string
 	var color string
+	var ack string
 	switch {
-	case header.IsACK():
-		flag = "ACK"
+
 	case header.IsEOF():
 		flag = "EOF"
 	case header.IsEXIT():
 		flag = "EXIT"
 	case header.IsFILE():
 		flag = "FILE"
-	case header.IsNACK():
-		flag = "NACK"
 	default:
-		flag = "none"
+		flag = "-"
+	}
+	switch {
+	case header.IsACK():
+		ack = "ACK"
+	case header.IsNACK():
+		ack = "NACK"
+	default:
+		ack = "-"
 	}
 	switch {
 	case header.IsRED():
@@ -35,7 +43,10 @@ func (header Header) GoString() string {
 	case header.IsBLUE():
 		color = "BLUE"
 	default:
-		color = "none"
+		color = "-"
+	}
+	if ack != "-" {
+		return fmt.Sprintf("Header(%s+%s,%s,%d)", flag, ack, color, header.Sequence)
 	}
 	return fmt.Sprintf("Header(%s,%s,%d)", flag, color, header.Sequence)
 }
@@ -56,9 +67,9 @@ func (header *Header) Bytes() []byte {
 	return res
 }
 
-// PureHeader returns a header that has only the color associated with it
+// Pure returns a header that has only the color associated with it
 // and the sequence number
-func (header *Header) PureHeader() Header {
+func (header Header) Pure() Header {
 	var pure Header
 	pure.Sequence = header.Sequence
 	if header.IsRED() {
@@ -75,8 +86,8 @@ func (header *Header) PureHeader() Header {
 // RED-BLUE sequencing
 func (header Header) Compare(other Header) int {
 	var (
-		this = header.PureHeader()
-		that = other.PureHeader()
+		this = header.Pure()
+		that = other.Pure()
 	)
 
 	if this == that {
