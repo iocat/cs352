@@ -309,6 +309,7 @@ loop:
 			}
 		case addr := <-unresponsiveAddr:
 			log.Warning.Printf("client %s is unresponsive. Removed client.", addr)
+			fs.receivers[addr].Stop()
 			// Get rid of the receiver
 			delete(fs.receivers, addr)
 			if len(fs.receivers) == 0 {
