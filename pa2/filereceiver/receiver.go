@@ -183,11 +183,9 @@ loop:
 			// try to drop the packet
 			if toDrop(fr.droppingChance) {
 				log.Warning.Printf("pseudo packet drop: drop one with header: %#v", segment.Header())
-				continue loop
-			} else {
-				// Acknowledge this packet on another thread
-				fr.acknowledge(segment.Segment)
+				break
 			}
+			fr.acknowledge(segment.Segment)
 
 			if compRes := segment.Header().Compare(expectedHeader); compRes == 0 {
 				// Handle an inorder segment
@@ -211,17 +209,20 @@ loop:
 						break inner
 					}
 				}
-			} else {
-				// This packet is later in the sequence
-				if compRes > 0 {
-					// Check if this segment was cached or not
-					if _, ok := cache.Get(segment.Header()); !ok {
-						// Go ahead and cache this packet if possible (non-blocking cache)
-						cache.Cache(segment.Header(), segment)
-					}
+			} else if compRes > 0 {
+				// New file rather than a previous file
+				// Reprocess the same file with the expected header is this packet
+				if segment.IsFILE() {
+					expectedHeader = segment.Header()
+					go func(data []byte) { newData <- data }(data)
+					break
+				}
+				// Check if this segment was cached or not
+				if _, ok := cache.Get(segment.Header()); !ok {
+					// Go ahead and cache this packet if possible (non-blocking cache)
+					cache.Cache(segment.Header(), segment)
 				}
 			}
-			// Skipped packet that is previous in the sequence ( already received)
 		}
 	}
 }

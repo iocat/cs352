@@ -17,7 +17,7 @@ const (
 	SegmentTimeout = 1500 * time.Millisecond
 	// SetupTimeout is the timeout before the sender stops broadcasting
 	// the establishment of connection
-	SetupTimeout = 1 * time.Second
+	SetupTimeout = 2 * time.Second
 	// UnresponsiveTimeout is the timeout before the sender gets rid of
 	// the client because the client is not responsive to the sender packet
 	// UnresponsiveTimeout is also the timeout for the receivers in case the

@@ -1,7 +1,6 @@
 package filesender
 
 import (
-	"fmt"
 	"math/rand"
 	"net"
 	"os"
@@ -15,8 +14,6 @@ import (
 	"github.com/iocat/rutgers-cs352/pa2/protocol/sender"
 	"github.com/iocat/rutgers-cs352/pa2/protocol/window"
 )
-
-var SetUpTimeout = 300 * time.Millisecond
 
 // FileSender maintains a stateful connection with a set of receivers
 // FileSender interacts with the window to make sure every client receive
@@ -298,7 +295,6 @@ loop:
 				receiver.Reset()
 				segment := w.Get(datagram.NewFromUDPPayload(response.data).Header.Pure())
 				if segment == nil {
-					fmt.Printf("skip ack: %#v\n", datagram.NewFromUDPPayload(response.data).Header.Pure())
 					continue
 				}
 				ts := segment.(*timeoutSegment)
