@@ -262,7 +262,7 @@ func (fs *FileSender) send(w *window.Window, file *os.File, first header.Header,
 	close(doneReceiveACK)
 	waitReceiveACK.Wait()
 	if toExit {
-		log.Info.Println("every receivers acknowledged EXIT.")
+		log.Info.Println("every receiver acknowledged EXIT.")
 	}
 	return h
 }
