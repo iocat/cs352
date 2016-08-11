@@ -261,6 +261,9 @@ func (fs *FileSender) send(w *window.Window, file *os.File, first header.Header,
 	// Signaling the receiving ACK thread to stop then wait until every ACKs have been received
 	close(doneReceiveACK)
 	waitReceiveACK.Wait()
+	if toExit {
+		log.Info.Println("every receivers acknowledged. Exit.")
+	}
 	return h
 }
 
