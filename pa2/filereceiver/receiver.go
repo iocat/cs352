@@ -223,13 +223,6 @@ loop:
 					}
 				}
 			} else if compRes > 0 {
-				// New file rather than a previous file
-				// Reprocess the same file with the expected header is this packet
-				if segment.IsFILE() {
-					expectedHeader = segment.Header()
-					go func(data []byte) { newData <- data }(data)
-					break
-				}
 				// Check if this segment was cached or not
 				if _, ok := cache.Get(segment.Header()); !ok {
 					// Go ahead and cache this packet if possible (non-blocking cache)
