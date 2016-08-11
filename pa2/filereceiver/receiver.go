@@ -2,6 +2,7 @@ package filereceiver
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"net"
 	"os"
@@ -187,6 +188,18 @@ loop:
 			}
 			fr.acknowledge(segment.Segment)
 
+			// Handle file packet separately
+			if segment.IsFILE() {
+				newFile, err := fr.handleFileSegment(string(segment.Payload))
+				if err != nil {
+					log.Warning.Println(err)
+				}
+				if newFile {
+					expectedHeader = segment.Next()
+					break
+				}
+			}
+
 			if compRes := segment.Header().Compare(expectedHeader); compRes == 0 {
 				// Handle an inorder segment
 				if fr.exitableHandleSegment(segment) {
@@ -230,7 +243,7 @@ loop:
 var errorExit = errors.New("exiting now")
 
 func (fr *FileReceiver) exitableHandleSegment(segment *receiverSegment) bool {
-	if err := fr.handleSegment(segment); err != nil {
+	if err := fr.handleNonFileSegment(segment); err != nil {
 		if err == errorExit {
 			return true
 		}
@@ -239,27 +252,33 @@ func (fr *FileReceiver) exitableHandleSegment(segment *receiverSegment) bool {
 	return false
 }
 
-func (fr *FileReceiver) handleSegment(segment *receiverSegment) error {
-	log.Info.Printf("handle packet: %#v\r", segment)
+// handleFileSegment creates a new file or throws an error, the first returned
+// value indicates whether a new file is added or not.
+// The parameter is the payload received containing the filename
+func (fr *FileReceiver) handleFileSegment(fp string) (bool, error) {
 	var err error
-	switch {
-	case segment.IsFILE():
-		if fr.currentFile == nil {
-			fp := string(segment.Payload)
-			fp = filepath.Join(fr.out, filepath.Base(fp))
-			fr.currentFile, err = os.Create(fp)
-			if err != nil {
-				log.Warning.Fatalf("Unable to create file: %s", err)
-			}
-			go log.Info.Printf("New FILE %s: spawned a file reconstructing thread", fp)
-			go reconstructFile(fr.currentFile, fr.reconstructData, fr.reconstructDone)
-		} else {
-			// File duplication
-			go log.Info.Println("duplicated FILE request: skip.")
-			if fr.currentFile.Name() == string(segment.Payload) {
-				return nil
-			}
+	fp = filepath.Join(fr.out, filepath.Base(fp))
+	if fr.currentFile == nil {
+		fr.currentFile, err = os.Create(fp)
+		if err != nil {
+			log.Warning.Fatalf("Unable to create file: %s", err)
 		}
+		go log.Info.Printf("New FILE %s: spawned a file reconstructing thread", fp)
+		go reconstructFile(fr.currentFile, fr.reconstructData, fr.reconstructDone)
+		return true, nil
+	}
+	filename := fr.currentFile.Name()
+	if filename == fp {
+		// File duplication
+		return false, fmt.Errorf("duplicated FILE request for %s: skipped", filename)
+	}
+	return false, fmt.Errorf("file %s was not closed before creating %s", filename, filepath.Base(fp))
+
+}
+
+func (fr *FileReceiver) handleNonFileSegment(segment *receiverSegment) error {
+	log.Info.Printf("handle packet: %#v\r", segment)
+	switch {
 	case segment.IsEXIT():
 		if fr.currentFile != nil {
 			// Send an eof signal
