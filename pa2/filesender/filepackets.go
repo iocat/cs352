@@ -294,19 +294,24 @@ loop:
 			}
 		case response := <-fs.newResponse:
 			if receiver, ok := fs.receivers[getAddr(response.addr)]; ok {
+				received := datagram.NewFromUDPPayload(response.data)
 				// Reset the timer
 				receiver.Reset()
-				segment := w.Get(datagram.NewFromUDPPayload(response.data).Header.Pure())
-				if segment == nil {
-					continue
+				switch {
+				case received.IsACK():
+					segment := w.Get(received.Header.Pure())
+					if segment == nil {
+						continue
+					}
+					ts := segment.(*timeoutSegment)
+					// Marked as ACKed
+					ts.ACK(getAddr(response.addr))
+					// Check if everyone acked, marks this segment as removable
+					if ts.HadAllACKed(fs.receivers) {
+						ts.Stop()
+					}
 				}
-				ts := segment.(*timeoutSegment)
-				// Marked as ACKed
-				ts.ACK(getAddr(response.addr))
-				// Check if everyone acked, marks this segment as removable
-				if ts.HadAllACKed(fs.receivers) {
-					ts.Stop()
-				}
+
 			} else {
 				log.Info.Printf("Handle ACK: Received packet from an unknown receiver @%s", response.addr.String())
 			}
