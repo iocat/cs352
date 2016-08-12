@@ -20,6 +20,7 @@ import (
 type TimeoutSender interface {
 	Start(addr *net.UDPAddr)
 	Stop()
+	Sender
 }
 
 type timeoutSender struct {
