@@ -11,4 +11,6 @@ IMPORTANT NOTE: pa1 and pa2 have an excessive use of channels, rather
 than a blocking primitive mechanism. No mutex was used in the project,
 which is a bad convention.
 
+IMPORTANT NOTE: Don't read the code. It stinks!!!
+
 Refer to this Wiki page for more info: https://github.com/golang/go/wiki/MutexOrChannel
